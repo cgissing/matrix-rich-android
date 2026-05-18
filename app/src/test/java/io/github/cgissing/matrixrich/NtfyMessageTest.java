@@ -1,4 +1,4 @@
-package io.github.hyjump.matrixrich;
+package io.github.cgissing.matrixrich;
 
 import org.junit.Test;
 
@@ -36,5 +36,14 @@ public class NtfyMessageTest {
         assertNull(message.id);
         assertEquals("Matrix Rich", message.notificationTitle("Matrix Rich"));
         assertEquals("Ping", message.notificationBody());
+    }
+
+    @Test
+    public void classifiesClientDeepLinksForNotificationWake() {
+        assertTrue(NtfyMessage.isClientDeepLink("matrixrich://open?url=https%3A%2F%2Fapp.element.io%2F"));
+        assertTrue(NtfyMessage.isClientDeepLink("NTFY://ntfy.example.com/topic"));
+        assertFalse(NtfyMessage.isClientDeepLink("https://app.element.io/"));
+        assertFalse(NtfyMessage.isClientDeepLink(""));
+        assertFalse(NtfyMessage.isClientDeepLink(null));
     }
 }

@@ -1,4 +1,4 @@
-package io.github.hyjump.matrixrich;
+package io.github.cgissing.matrixrich;
 
 import java.io.UnsupportedEncodingException;
 import java.net.URLEncoder;

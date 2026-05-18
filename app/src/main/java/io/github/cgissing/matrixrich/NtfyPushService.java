@@ -1,4 +1,4 @@
-package io.github.hyjump.matrixrich;
+package io.github.cgissing.matrixrich;
 
 import android.app.Notification;
 import android.app.NotificationChannel;
@@ -7,6 +7,7 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.net.Uri;
 import android.os.Build;
 import android.os.IBinder;
 
@@ -117,7 +118,12 @@ public class NtfyPushService extends Service {
         Intent open = new Intent(this, MainActivity.class);
         open.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         if (message.click != null && !message.click.isEmpty()) {
-            open.putExtra("open_url", message.click);
+            if (NtfyMessage.isClientDeepLink(message.click)) {
+                open.setAction(Intent.ACTION_VIEW);
+                open.setData(Uri.parse(message.click));
+            } else {
+                open.putExtra("open_url", message.click);
+            }
         }
         PendingIntent pendingIntent = PendingIntent.getActivity(
                 this,

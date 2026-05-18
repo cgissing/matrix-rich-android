@@ -26,10 +26,10 @@
 ### Task 2: ntfy Parser and Endpoint Tests
 
 **Files:**
-- Create: `app/src/test/java/io/github/hyjump/matrixrich/NtfyMessageTest.java`
-- Create: `app/src/test/java/io/github/hyjump/matrixrich/NtfyEndpointTest.java`
-- Create: `app/src/main/java/io/github/hyjump/matrixrich/NtfyMessage.java`
-- Create: `app/src/main/java/io/github/hyjump/matrixrich/NtfyEndpoint.java`
+- Create: `app/src/test/java/io/github/cgissing/matrixrich/NtfyMessageTest.java`
+- Create: `app/src/test/java/io/github/cgissing/matrixrich/NtfyEndpointTest.java`
+- Create: `app/src/main/java/io/github/cgissing/matrixrich/NtfyMessage.java`
+- Create: `app/src/main/java/io/github/cgissing/matrixrich/NtfyEndpoint.java`
 
 - [x] Test parsing displayable ntfy message events.
 - [x] Test ignoring `open` and `keepalive` events.
@@ -41,7 +41,7 @@
 
 **Files:**
 - Create: `app/src/main/AndroidManifest.xml`
-- Create: `app/src/main/java/io/github/hyjump/matrixrich/MainActivity.java`
+- Create: `app/src/main/java/io/github/cgissing/matrixrich/MainActivity.java`
 - Create: `app/src/main/res/values/strings.xml`
 - Create: `app/src/main/res/values/styles.xml`
 - Create: `app/src/main/res/drawable/ic_launcher.xml`
@@ -55,9 +55,9 @@
 ### Task 3.1: Element Web Mobile Adapter
 
 **Files:**
-- Create: `app/src/main/java/io/github/hyjump/matrixrich/MobileElementAdapter.java`
-- Create: `app/src/test/java/io/github/hyjump/matrixrich/MobileElementAdapterTest.java`
-- Modify: `app/src/main/java/io/github/hyjump/matrixrich/MainActivity.java`
+- Create: `app/src/main/java/io/github/cgissing/matrixrich/MobileElementAdapter.java`
+- Create: `app/src/test/java/io/github/cgissing/matrixrich/MobileElementAdapterTest.java`
+- Modify: `app/src/main/java/io/github/cgissing/matrixrich/MainActivity.java`
 
 - [x] Add adapter tests checking LaTeX labs storage, mobile-guide bypass, table CSS, and KaTeX CSS.
 - [x] Generate an injected script that installs the viewport, CSS, and Element Web labs setting.
@@ -66,8 +66,8 @@
 ### Task 4: ntfy Foreground Push
 
 **Files:**
-- Create: `app/src/main/java/io/github/hyjump/matrixrich/NtfyPushService.java`
-- Create: `app/src/main/java/io/github/hyjump/matrixrich/BootReceiver.java`
+- Create: `app/src/main/java/io/github/cgissing/matrixrich/NtfyPushService.java`
+- Create: `app/src/main/java/io/github/cgissing/matrixrich/BootReceiver.java`
 - Modify: `app/src/main/AndroidManifest.xml`
 
 - [x] Add foreground service permissions and service declaration.

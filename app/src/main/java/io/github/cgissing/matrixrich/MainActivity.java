@@ -1,4 +1,4 @@
-package io.github.hyjump.matrixrich;
+package io.github.cgissing.matrixrich;
 
 import android.Manifest;
 import android.app.Activity;
@@ -389,8 +389,16 @@ public class MainActivity extends Activity {
         }
         String openUrl = intent.getStringExtra("open_url");
         if (openUrl != null && !openUrl.isEmpty()) {
+            if (NtfyMessage.isClientDeepLink(openUrl)) {
+                handleIntent(new Intent(Intent.ACTION_VIEW, Uri.parse(openUrl)));
+                return;
+            }
             showTab(TAB_CHAT);
-            webView.loadUrl(openUrl);
+            if (openUrl.startsWith("http://") || openUrl.startsWith("https://")) {
+                webView.loadUrl(openUrl);
+            } else {
+                loadConfiguredUrl();
+            }
             return;
         }
         Uri data = intent.getData();

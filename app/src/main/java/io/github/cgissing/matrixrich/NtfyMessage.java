@@ -1,7 +1,9 @@
-package io.github.hyjump.matrixrich;
+package io.github.cgissing.matrixrich;
 
 import org.json.JSONException;
 import org.json.JSONObject;
+
+import java.util.Locale;
 
 public final class NtfyMessage {
     public final String id;
@@ -54,6 +56,14 @@ public final class NtfyMessage {
             return message;
         }
         return "New notification";
+    }
+
+    public static boolean isClientDeepLink(String value) {
+        if (value == null) {
+            return false;
+        }
+        String lower = value.trim().toLowerCase(Locale.ROOT);
+        return lower.startsWith("matrixrich://") || lower.startsWith("ntfy://");
     }
 
     private static String optionalString(JSONObject json, String key) {
