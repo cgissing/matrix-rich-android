@@ -5,14 +5,14 @@ import android.content.SharedPreferences;
 
 final class AppPrefs {
     static final String PREFS = "matrix_rich";
-    static final String KEY_ELEMENT_URL = "element_url";
-    static final String KEY_DESKTOP_USER_AGENT = "desktop_user_agent";
+    static final String KEY_HOMESERVER_URL = "homeserver_url";
+    static final String KEY_ACCOUNT_HINT = "account_hint";
     static final String KEY_PUSH_ENABLED = "push_enabled";
     static final String KEY_NTFY_SERVER = "ntfy_server";
     static final String KEY_NTFY_TOPIC = "ntfy_topic";
     static final String KEY_NTFY_TOKEN = "ntfy_token";
 
-    static final String DEFAULT_ELEMENT_URL = "https://app.element.io/";
+    static final String DEFAULT_HOMESERVER_URL = "https://matrix.org";
     static final String DEFAULT_NTFY_SERVER = "https://ntfy.sh";
 
     private AppPrefs() {
@@ -22,12 +22,12 @@ final class AppPrefs {
         return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
     }
 
-    static String elementUrl(Context context) {
-        return get(context).getString(KEY_ELEMENT_URL, DEFAULT_ELEMENT_URL);
+    static String homeserverUrl(Context context) {
+        return get(context).getString(KEY_HOMESERVER_URL, DEFAULT_HOMESERVER_URL);
     }
 
-    static boolean desktopUserAgent(Context context) {
-        return get(context).getBoolean(KEY_DESKTOP_USER_AGENT, true);
+    static String accountHint(Context context) {
+        return get(context).getString(KEY_ACCOUNT_HINT, "");
     }
 
     static boolean pushEnabled(Context context) {

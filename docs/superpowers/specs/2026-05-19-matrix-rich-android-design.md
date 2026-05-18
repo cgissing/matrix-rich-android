@@ -1,37 +1,27 @@
-# Matrix Rich Android Design
+# Matrix Rich Android Native UI Design
 
-## Goal
+## Product Boundary
 
-Build an Android client that gives Matrix messages a ChatGPT/Gemini-like rich rendering path for Markdown, tables, and formulas, while supporting ntfy-based notification wake-up without making agents output Matrix-specific markup.
+The Android main chat UI is native. It must not show Element Web or any other desktop web Matrix client as the visible room timeline. Element Web can remain a reference for Matrix/E2EE behavior, but it is not the product UI.
 
-## Verified Constraints
+## Native Chat Surface
 
-Element Web is a useful runtime reference because E2EE and rich web rendering are already implemented there. It is also not a drop-in mobile client: current Element Web source redirects Android/iOS user agents to `mobile_guide/`, and that page states the desktop site does not work on mobile. The public `app.element.io/config.json` also does not force-enable `feature_latex_maths`.
+The app uses a native activity layout with a top app bar, horizontal room rail, scrollable message timeline, composer, push tab, and settings tab. This follows the rough information architecture of Android chat clients: room selection first, conversation content second, composer fixed at the bottom.
 
-Formula rendering in Element Web uses KaTeX via React/DOM inside the hosted page. It is not one Android WebView per formula. The realistic performance risk is many KaTeX DOM nodes in one WebView timeline.
+## Rich Message Rendering
 
-## Architecture
+Message bodies are rendered through Markwon. The renderer enables Markdown, tables, and LaTeX. Single-dollar inline formulas are normalized to the delimiter form expected by the native LaTeX plugin, so senders and agents can keep producing ordinary Markdown math.
 
-The first implementation is an Android native shell with a single WebView and a foreground ntfy listener. The shell uses a mobile-client layout: top app bar, bottom navigation, chat runtime tab, push tab, and settings tab. The WebView loads a configurable Element Web URL inside the chat tab. The app applies a desktop user agent and the Element mobile-guide bypass cookie by default so `app.element.io` remains usable as a fallback. The recommended deployment is a self-hosted or pinned Element Web static bundle with `mobile_guide_toast=false` and `feature_latex_maths=true`.
+## Push Wake
 
-After Element Web loads, the Android shell injects a small adapter script. The script enables the Element Web LaTeX labs flag in local storage, reapplies the mobile-guide bypass, adds a viewport tag when needed, and installs narrow-screen CSS for timelines, tables, code blocks, and KaTeX display blocks. This does not replace Element Web's app internals, but it reduces the worst mobile layout problems without taking on Matrix sync/E2EE natively.
+The ntfy foreground service remains independent from the Matrix engine. It listens to a configured ntfy JSON stream, shows native Android notifications, and wakes the native chat surface through `matrixrich://` or regular URL payloads.
 
-The ntfy layer is independent from Element Web. It subscribes to the configured ntfy `/topic/json` stream in a foreground service, shows native notifications, and opens the WebView when the user taps the notification. A Matrix homeserver, Hermes gateway, or separate bridge must publish the actual push payload to ntfy.
+## Runtime Boundary
 
-## Components
+The current implementation contains the native shell, rich renderer, and push bridge. Live Matrix sync and E2EE should be added behind this native UI boundary. The visible UI should consume room summaries, timeline events, and send results from that runtime instead of embedding a web client.
 
-- `MainActivity`: hosts native mobile shell UI, WebView, settings tab, push tab, deep-link handling, file chooser, media permission forwarding, and service start/stop.
-- `MobileElementAdapter`: generates the Element Web mobile adapter script and CSS.
-- `NtfyPushService`: foreground service that streams ntfy JSON events and posts Android notifications.
-- `NtfyMessage`: small parser for ntfy JSON lines.
-- `NtfyEndpoint`: URL normalizer/encoder for ntfy JSON streams.
-- `BootReceiver`: restarts the foreground listener after boot when enabled.
-- GitHub Actions workflow: installs Android SDK and Gradle, runs JVM tests, and builds the debug APK artifact.
+## Non-Goals
 
-## Out Of Scope For First Pass
-
-- Rewriting Matrix sync/E2EE natively.
-- Forking Element X Android.
-- Integrating Huawei/Xiaomi/OPPO/vivo push SDKs.
-- Making Element Web itself fully mobile-native.
-- Publishing a signed release APK.
+- Visible Element Web timeline.
+- Matrix-specific math message formats.
+- Committed credentials, recovery keys, ntfy tokens, or signing keys.

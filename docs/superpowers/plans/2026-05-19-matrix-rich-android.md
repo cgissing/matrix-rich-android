@@ -1,90 +1,32 @@
-# Matrix Rich Android Implementation Plan
+# Matrix Rich Android Native UI Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+This plan supersedes the first WebView-shell plan.
 
-**Goal:** Build a debug-buildable Android WebView Matrix client shell with ntfy notification wake support.
+## Goal
 
-**Architecture:** Host Element Web or a compatible static Matrix web client in one Android WebView inside a native mobile shell with top app bar, bottom navigation, push tab, and settings tab. Keep push separate in a foreground ntfy JSON-stream service. Use GitHub Actions for reproducible APK builds.
+Build an Android-native Matrix client surface with rich Markdown, table, formula rendering, and ntfy notification wake support. Element Web may be used as implementation reference, but the visible chat UI must be native Android.
 
-**Tech Stack:** Android Java, Android WebView, ntfy JSON stream, Gradle Android Plugin, GitHub Actions.
+## Architecture
 
----
+- `MainActivity`: native top app bar, room rail, timeline, composer, push tab, and settings tab.
+- `RichMarkdownRenderer`: Markwon-based Markdown renderer with table and LaTeX plugins.
+- `DemoMatrixState`: temporary local timeline fixtures that exercise Markdown, tables, inline formulas, and display formulas.
+- `NtfyPushService`: foreground ntfy JSON stream listener.
+- `NtfyEndpoint` and `NtfyMessage`: pure Java push URL/message parsing.
 
-### Task 1: Project and CI
+## Implemented Tasks
 
-**Files:**
-- Create: `settings.gradle`
-- Create: `build.gradle`
-- Create: `app/build.gradle`
-- Create: `.github/workflows/android.yml`
-- Create: `.gitignore`
+- [x] Remove the visible WebView chat tab.
+- [x] Remove Element Web mobile adapter code and tests.
+- [x] Replace the main chat surface with native Android room and timeline views.
+- [x] Add native Markdown/table/LaTeX rendering dependencies.
+- [x] Normalize single-dollar inline math so agents can keep writing normal Markdown math.
+- [x] Keep ntfy foreground listener and deep-link wake handling.
+- [x] Update README to describe the native UI boundary.
 
-- [x] Create the Gradle Android project skeleton.
-- [x] Add JUnit for JVM unit tests.
-- [x] Add GitHub Actions steps for JDK 17, Android SDK, Gradle 8.10.2, unit tests, debug APK assembly, and artifact upload.
+## Remaining Tasks
 
-### Task 2: ntfy Parser and Endpoint Tests
-
-**Files:**
-- Create: `app/src/test/java/io/github/cgissing/matrixrich/NtfyMessageTest.java`
-- Create: `app/src/test/java/io/github/cgissing/matrixrich/NtfyEndpointTest.java`
-- Create: `app/src/main/java/io/github/cgissing/matrixrich/NtfyMessage.java`
-- Create: `app/src/main/java/io/github/cgissing/matrixrich/NtfyEndpoint.java`
-
-- [x] Test parsing displayable ntfy message events.
-- [x] Test ignoring `open` and `keepalive` events.
-- [x] Test missing optional fields.
-- [x] Test ntfy JSON stream URL construction and topic encoding.
-- [x] Implement parser and URL helper.
-
-### Task 3: Android WebView Shell
-
-**Files:**
-- Create: `app/src/main/AndroidManifest.xml`
-- Create: `app/src/main/java/io/github/cgissing/matrixrich/MainActivity.java`
-- Create: `app/src/main/res/values/strings.xml`
-- Create: `app/src/main/res/values/styles.xml`
-- Create: `app/src/main/res/drawable/ic_launcher.xml`
-
-- [x] Create a no-XML Activity UI with mobile top app bar, bottom navigation, WebView chat tab, push tab, and settings tab.
-- [x] Enable JavaScript, DOM storage, database storage, file chooser, media permission forwarding, and zoom.
-- [x] Apply Element mobile-guide bypass cookie and desktop user agent by default.
-- [x] Add settings tab for Element Web URL and ntfy values.
-- [x] Add `matrixrich://` and `ntfy://` deep-link handling.
-
-### Task 3.1: Element Web Mobile Adapter
-
-**Files:**
-- Create: `app/src/main/java/io/github/cgissing/matrixrich/MobileElementAdapter.java`
-- Create: `app/src/test/java/io/github/cgissing/matrixrich/MobileElementAdapterTest.java`
-- Modify: `app/src/main/java/io/github/cgissing/matrixrich/MainActivity.java`
-
-- [x] Add adapter tests checking LaTeX labs storage, mobile-guide bypass, table CSS, and KaTeX CSS.
-- [x] Generate an injected script that installs the viewport, CSS, and Element Web labs setting.
-- [x] Inject the script after WebView page load.
-
-### Task 4: ntfy Foreground Push
-
-**Files:**
-- Create: `app/src/main/java/io/github/cgissing/matrixrich/NtfyPushService.java`
-- Create: `app/src/main/java/io/github/cgissing/matrixrich/BootReceiver.java`
-- Modify: `app/src/main/AndroidManifest.xml`
-
-- [x] Add foreground service permissions and service declaration.
-- [x] Subscribe to ntfy `/topic/json`.
-- [x] Support bearer-token auth.
-- [x] Show message notifications.
-- [x] Open the WebView on notification tap.
-- [x] Restart listener on boot when enabled.
-
-### Task 5: Documentation and Verification
-
-**Files:**
-- Create: `README.md`
-- Create: `docs/superpowers/specs/2026-05-19-matrix-rich-android-design.md`
-- Create: `docs/superpowers/plans/2026-05-19-matrix-rich-android.md`
-
-- [x] Document verified Element Web mobile limitations.
-- [x] Document recommended self-hosted Element Web config for LaTeX.
-- [x] Document ntfy setup and GitHub Actions APK artifact.
-- [ ] Run JVM unit tests and debug APK build in an Android-capable environment.
+- [ ] Wire a real Matrix sync/E2EE runtime behind the native UI.
+- [ ] Replace demo room/message fixtures with live room summaries and events.
+- [ ] Add Android instrumentation screenshots for the native layout.
+- [ ] Add release signing through GitHub Actions secrets.

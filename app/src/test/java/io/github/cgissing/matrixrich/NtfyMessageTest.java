@@ -40,9 +40,9 @@ public class NtfyMessageTest {
 
     @Test
     public void classifiesClientDeepLinksForNotificationWake() {
-        assertTrue(NtfyMessage.isClientDeepLink("matrixrich://open?url=https%3A%2F%2Fapp.element.io%2F"));
+        assertTrue(NtfyMessage.isClientDeepLink("matrixrich://open?url=https%3A%2F%2Fmatrix.to%2F%23%2Froom"));
         assertTrue(NtfyMessage.isClientDeepLink("NTFY://ntfy.example.com/topic"));
-        assertFalse(NtfyMessage.isClientDeepLink("https://app.element.io/"));
+        assertFalse(NtfyMessage.isClientDeepLink("https://matrix.to/#/room"));
         assertFalse(NtfyMessage.isClientDeepLink(""));
         assertFalse(NtfyMessage.isClientDeepLink(null));
     }

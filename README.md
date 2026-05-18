@@ -1,51 +1,43 @@
 # Matrix Rich Android
 
-Matrix Rich Android is a small Android shell for using a web Matrix client with rich LLM-style message rendering, plus an ntfy-based notification wake path.
+Matrix Rich Android is an Android-native Matrix client experiment focused on LLM-style rich message reading: Markdown, tables, formulas, and ntfy wake notifications.
 
-The first runtime target is Element Web or a compatible static Element Web deployment. Element Web already carries the Matrix web client, E2EE implementation, Markdown rendering, table support through the browser engine, and KaTeX-based math rendering when `feature_latex_maths` is enabled. This Android app does not ask agents to emit Matrix-specific math HTML.
+The main chat surface is native Android UI. It does not embed Element Web as the visible room timeline.
 
 ## Current Shape
 
-- A native Android shell provides the mobile layout: top app bar, bottom navigation, a chat runtime tab, a push-status tab, and a settings tab.
-- One Android `WebView` hosts the configured Matrix web client inside the chat tab.
-- The default URL is `https://app.element.io/`, but this is a fallback.
-- A desktop user agent and `element_mobile_redirect_to_guide=false` cookie are applied by default because the official site redirects Android/iOS user agents to its mobile guide.
-- After each Element Web page load, the shell injects a small mobile adapter that enables the LaTeX labs flag in local storage, reapplies the mobile-guide bypass, and adds CSS for narrow timelines, tables, code blocks, and KaTeX display blocks.
-- A foreground `NtfyPushService` subscribes to `/<topic>/json`, shows Android notifications, and opens the WebView when a notification is tapped.
-- `matrixrich://open?url=https%3A%2F%2Fmatrix.to%2F%23%2F...` can wake the app and load a target URL.
-- `ntfy://ntfy.example.com/topic` can seed the ntfy server/topic settings.
+- Native top app bar, room rail, message timeline, composer, push tab, and settings tab.
+- Message bodies render through Markwon with table and LaTeX plugins.
+- Inline `$...$` formulas are accepted and normalized for the native LaTeX renderer.
+- `$$...$$` display formulas are preserved.
+- ntfy foreground service subscribes to `/<topic>/json`, shows Android notifications, and wakes the native chat surface.
+- `matrixrich://open?url=...` and `ntfy://host/topic` deep links are handled by the Android app.
 
-## Recommended Element Web Deployment
+## What Changed From The First Attempt
 
-For the rich-text goal, use a self-hosted or pinned Element Web static deployment instead of relying on the public `app.element.io` defaults. A suitable `config.json` should include:
+The first build exposed Element Web directly inside the main Chats tab. That is not the intended product shape. The visible WebView path has been removed from `MainActivity`; the app now renders a native Android chat layout.
 
-```json
-{
-  "mobile_guide_toast": false,
-  "show_labs_settings": true,
-  "features": {
-    "feature_latex_maths": true
-  }
-}
+Element Web remains useful as a reference for E2EE behavior and rendering expectations, but it is not the Android main UI.
+
+## Matrix Engine Status
+
+This repository currently has the native Android shell, rich message renderer, and ntfy wake path. The Matrix sync/E2EE engine still needs to be wired behind the native UI. The intended boundary is:
+
+```text
+Matrix sync/E2EE runtime
+        |
+        v
+Native room list + native timeline + native composer
+        |
+        v
+Markwon table/formula renderer
 ```
 
-This repository includes the same idea as `element-web-config.example.json`.
-
-Why: the official public `app.element.io/config.json` currently does not enable `feature_latex_maths`, and its mobile guide page says the desktop site does not work on mobile. This app bypasses the redirect and wraps the runtime in native mobile navigation, but a pinned/self-hosted Element Web bundle is still the cleaner base for a daily client.
-
-## Formula Performance Note
-
-Element Web formulas are rendered by KaTeX inside the single hosted WebView. It is not one Android `WebView` per formula. The remaining performance risk is normal web layout cost from many KaTeX DOM nodes in a long timeline.
-
-## Privacy Notes
-
-- Do not commit ntfy bearer tokens, homeserver access tokens, Matrix recovery keys, signing keys, or generated APK signing material.
-- The sample Element Web config contains only public defaults and feature flags.
-- GitHub Actions currently builds an unsigned debug APK artifact. Release signing should use GitHub Actions secrets later, not files committed to the repository.
+The Android UI should stay native while the protocol runtime is added behind it.
 
 ## ntfy Setup
 
-1. Open **Settings** in the app.
+1. Open **Settings**.
 2. Set `ntfy server`, for example `https://ntfy.sh` or your own server.
 3. Set `ntfy topic`.
 4. Optionally set a bearer token.
@@ -57,16 +49,22 @@ Publish a test notification:
 curl -d "Hello from Matrix Rich" https://ntfy.sh/YOUR_TOPIC
 ```
 
-Publish a notification that wakes this app from ntfy or another bridge:
+Publish a notification that wakes this app:
 
 ```bash
 curl \
-  -H "Click: matrixrich://open?url=https%3A%2F%2Fapp.element.io%2F" \
+  -H "Click: matrixrich://open?url=https%3A%2F%2Fmatrix.to%2F%23%2F..." \
   -d "Open Matrix Rich" \
   https://ntfy.sh/YOUR_TOPIC
 ```
 
 For Matrix notifications, your homeserver, bot, or gateway still needs to publish to the same ntfy topic. The Android app is the receiver and wake surface.
+
+## Privacy Notes
+
+- Do not commit ntfy bearer tokens, homeserver access tokens, Matrix recovery keys, signing keys, or generated APK signing material.
+- GitHub Actions builds an unsigned debug APK artifact.
+- Release signing should use GitHub Actions secrets later, not files committed to the repository.
 
 ## Build
 
@@ -83,5 +81,3 @@ Local build, when Android SDK and Java are installed:
 ```bash
 gradle testDebugUnitTest assembleDebug
 ```
-
-On this Windows workspace, Java/Gradle/ANDROID_HOME were not present during scaffolding, so local APK compilation was intentionally left to GitHub Actions.
