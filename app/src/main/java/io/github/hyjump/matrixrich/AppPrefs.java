@@ -1,4 +1,4 @@
-package xyz.luoyu.matrixrich;
+package io.github.hyjump.matrixrich;
 
 import android.content.Context;
 import android.content.SharedPreferences;

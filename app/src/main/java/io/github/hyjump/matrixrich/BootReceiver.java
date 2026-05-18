@@ -1,4 +1,4 @@
-package xyz.luoyu.matrixrich;
+package io.github.hyjump.matrixrich;
 
 import android.content.BroadcastReceiver;
 import android.content.Context;

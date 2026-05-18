@@ -3,11 +3,11 @@ plugins {
 }
 
 android {
-    namespace "xyz.luoyu.matrixrich"
+    namespace "io.github.hyjump.matrixrich"
     compileSdk 35
 
     defaultConfig {
-        applicationId "xyz.luoyu.matrixrich"
+        applicationId "io.github.hyjump.matrixrich"
         minSdk 23
         targetSdk 35
         versionCode 1

@@ -1,4 +1,4 @@
-package xyz.luoyu.matrixrich;
+package io.github.hyjump.matrixrich;
 
 import org.json.JSONException;
 import org.json.JSONObject;

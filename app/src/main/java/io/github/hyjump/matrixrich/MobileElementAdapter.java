@@ -1,4 +1,4 @@
-package xyz.luoyu.matrixrich;
+package io.github.hyjump.matrixrich;
 
 public final class MobileElementAdapter {
     private static final String CSS =
