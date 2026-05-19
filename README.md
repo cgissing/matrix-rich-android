@@ -13,6 +13,8 @@ The main chat surface is native Android UI. It does not embed Element Web as the
 - A hidden local WebView runs a bundled Matrix JS SDK runtime for Matrix sync/send and Rust/WASM E2EE. This runtime is not a visible chat UI.
 - Matrix JS SDK snapshots populate the native room rail and timeline.
 - Sending goes through Matrix JS SDK so encrypted rooms are sent through the E2EE stack instead of the raw REST fallback.
+- Native room state includes live typing indicators. The composer sends Matrix typing notifications while the user is actively editing.
+- Message bubbles expose emoji reactions from Matrix `m.reaction` events and provide quick reaction buttons for common emoji responses.
 - E2EE session verification can be started from Settings. The native UI exposes Matrix JS SDK SAS and QR flows: request or accept verification, compare SAS values, show a QR code for another device, scan another device's QR code, and confirm successful scans.
 - Message bodies render through Markwon with table and LaTeX plugins.
 - Inline `$...$` formulas are accepted and normalized for the native LaTeX renderer.

@@ -11,6 +11,8 @@ for (const marker of [
   "initRustCrypto",
   "MatrixRichRuntime",
   "sendTextMessage",
+  "sendTyping",
+  "m.reaction",
   "loadSessionBackupPrivateKeyFromSecretStorage",
   "requestOwnUserVerification",
   "generateQRCode",

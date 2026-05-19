@@ -12,7 +12,11 @@ import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.text.Editable;
 import android.text.InputType;
+import android.text.TextWatcher;
 import android.util.Base64;
 import android.view.Gravity;
 import android.view.View;
@@ -52,12 +56,15 @@ public class MainActivity extends Activity {
     private static final String ZXING_BEEP_ENABLED = "BEEP_ENABLED";
     private static final String ZXING_SCAN_RESULT = "SCAN_RESULT";
     private static final String ZXING_SCAN_RESULT_BYTES = "SCAN_RESULT_BYTES";
+    private static final String[] QUICK_REACTIONS = {"👍", "❤️", "😂", "🎉", "👀"};
     private static final int TAB_CHAT = 0;
     private static final int TAB_PUSH = 1;
     private static final int TAB_SETTINGS = 2;
 
     private final List<NativeRoom> rooms = new ArrayList<>();
     private final Map<String, List<NativeMessage>> messagesByRoom = new HashMap<>();
+    private final Handler typingHandler = new Handler(Looper.getMainLooper());
+    private final Runnable stopTypingRunnable = this::stopTypingNow;
 
     private NativeRoom selectedRoom;
     private int currentTab = TAB_CHAT;
@@ -68,6 +75,7 @@ public class MainActivity extends Activity {
     private LinearLayout roomRail;
     private LinearLayout timeline;
     private EditText composerInput;
+    private TextView typingNotice;
     private TextView title;
     private TextView subtitle;
     private TextView wakeNotice;
@@ -104,6 +112,8 @@ public class MainActivity extends Activity {
     private String renderedVerificationQrBase64 = "";
     private MatrixVerificationState verificationState = MatrixVerificationState.empty();
     private HeadlessMatrixRuntime matrixRuntime;
+    private String activeTypingRoomId = "";
+    private long lastTypingSentAt = 0L;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -178,6 +188,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        stopTypingNow();
         if (matrixRuntime != null) {
             matrixRuntime.destroy();
         }
@@ -251,6 +262,12 @@ public class MainActivity extends Activity {
         timelineScroll.addView(timeline, new ScrollView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         root.addView(timelineScroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
 
+        typingNotice = text("", 13, Color.rgb(20, 103, 84), false);
+        typingNotice.setPadding(dp(14), dp(7), dp(14), dp(7));
+        typingNotice.setBackgroundColor(Color.rgb(226, 244, 238));
+        typingNotice.setVisibility(View.GONE);
+        root.addView(typingNotice, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
         root.addView(createComposer(), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         renderRooms();
         renderSelectedRoom();
@@ -271,6 +288,20 @@ public class MainActivity extends Activity {
         composerInput.setHint("Message");
         composerInput.setTextSize(15);
         composerInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        composerInput.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                handleComposerTyping(s);
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+            }
+        });
         composer.addView(composerInput, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
 
         Button send = actionButton("Send");
@@ -289,6 +320,7 @@ public class MainActivity extends Activity {
             boolean selected = selectedRoom != null && selectedRoom.id.equals(room.id);
             tintRoomButton(button, selected);
             button.setOnClickListener((View v) -> {
+                stopTypingNow();
                 selectedRoom = room;
                 renderRooms();
                 renderSelectedRoom();
@@ -305,7 +337,11 @@ public class MainActivity extends Activity {
         }
         timeline.removeAllViews();
         title.setText(selectedRoom.title);
-        subtitle.setText(selectedRoom.subtitle);
+        subtitle.setText(selectedRoom.typingSummary.isEmpty() ? selectedRoom.subtitle : selectedRoom.typingSummary);
+        if (typingNotice != null) {
+            typingNotice.setText(selectedRoom.typingSummary);
+            typingNotice.setVisibility(selectedRoom.typingSummary.isEmpty() ? View.GONE : View.VISIBLE);
+        }
         List<NativeMessage> messages = messagesByRoom.get(selectedRoom.id);
         if (messages == null || messages.isEmpty()) {
             messages = new ArrayList<>();
@@ -335,11 +371,55 @@ public class MainActivity extends Activity {
         RichMarkdownRenderer.render(RichMarkdownRenderer.create(this, body), body, message.bodyMarkdown);
         bubble.addView(body, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
+        addReactionRows(bubble, message);
+
         LinearLayout.LayoutParams bubbleParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         bubbleParams.weight = 0;
         bubbleParams.setMargins(message.outbound ? dp(54) : 0, 0, message.outbound ? 0 : dp(54), dp(10));
         row.addView(bubble, bubbleParams);
         return row;
+    }
+
+    private void addReactionRows(LinearLayout bubble, NativeMessage message) {
+        if (!message.reactions.isEmpty()) {
+            LinearLayout reactionRow = new LinearLayout(this);
+            reactionRow.setOrientation(LinearLayout.HORIZONTAL);
+            reactionRow.setPadding(0, dp(7), 0, 0);
+            for (NativeReaction reaction : message.reactions) {
+                Button chip = reactionButton(reaction.key + " " + reaction.count, reaction.reactedByMe);
+                chip.setOnClickListener((View v) -> sendReaction(message, reaction.key));
+                LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36));
+                params.setMargins(0, 0, dp(6), 0);
+                reactionRow.addView(chip, params);
+            }
+            bubble.addView(reactionRow, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        }
+
+        if (!message.eventId.isEmpty() && selectedRoom != null && !"setup".equals(selectedRoom.id)) {
+            LinearLayout quickRow = new LinearLayout(this);
+            quickRow.setOrientation(LinearLayout.HORIZONTAL);
+            quickRow.setPadding(0, dp(5), 0, 0);
+            for (String key : QUICK_REACTIONS) {
+                Button button = reactionButton(key, false);
+                button.setOnClickListener((View v) -> sendReaction(message, key));
+                LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(42), dp(34));
+                params.setMargins(0, 0, dp(5), 0);
+                quickRow.addView(button, params);
+            }
+            bubble.addView(quickRow, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        }
+    }
+
+    private Button reactionButton(String label, boolean selected) {
+        Button button = actionButton(label);
+        button.setTextSize(14);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius(dp(16));
+        bg.setColor(selected ? Color.rgb(215, 246, 237) : Color.rgb(245, 247, 248));
+        bg.setStroke(1, selected ? Color.rgb(24, 129, 104) : Color.rgb(220, 228, 225));
+        button.setBackground(bg);
+        button.setTextColor(selected ? Color.rgb(7, 99, 76) : Color.rgb(42, 54, 58));
+        return button;
     }
 
     private GradientDrawable bubbleBackground(boolean outbound) {
@@ -366,8 +446,50 @@ public class MainActivity extends Activity {
         }
         NativeRoom targetRoom = selectedRoom;
         composerInput.setText("");
+        stopTypingNow();
         setBusy("Sending through Matrix JS E2EE runtime...");
         matrixRuntime.sendText(targetRoom.id, draft);
+    }
+
+    private void sendReaction(NativeMessage message, String key) {
+        if (selectedRoom == null || message.eventId.isEmpty()) {
+            return;
+        }
+        if (AppPrefs.accessToken(this).trim().isEmpty()) {
+            Toast.makeText(this, "Log in before reacting", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        matrixRuntime.sendReaction(selectedRoom.id, message.eventId, key);
+    }
+
+    private void handleComposerTyping(CharSequence value) {
+        if (matrixRuntime == null || selectedRoom == null || "setup".equals(selectedRoom.id)) {
+            return;
+        }
+        if (AppPrefs.accessToken(this).trim().isEmpty()) {
+            return;
+        }
+        typingHandler.removeCallbacks(stopTypingRunnable);
+        if (value == null || value.toString().trim().isEmpty()) {
+            stopTypingNow();
+            return;
+        }
+        long now = System.currentTimeMillis();
+        if (!selectedRoom.id.equals(activeTypingRoomId) || now - lastTypingSentAt > 1500) {
+            activeTypingRoomId = selectedRoom.id;
+            lastTypingSentAt = now;
+            matrixRuntime.sendTyping(selectedRoom.id, true);
+        }
+        typingHandler.postDelayed(stopTypingRunnable, 4000);
+    }
+
+    private void stopTypingNow() {
+        typingHandler.removeCallbacks(stopTypingRunnable);
+        if (matrixRuntime != null && !activeTypingRoomId.isEmpty()) {
+            matrixRuntime.sendTyping(activeTypingRoomId, false);
+        }
+        activeTypingRoomId = "";
+        lastTypingSentAt = 0L;
     }
 
     private View createPushPanel() {

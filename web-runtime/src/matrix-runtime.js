@@ -1,5 +1,7 @@
 import * as sdk from "matrix-js-sdk";
+import { EventType, RelationType } from "matrix-js-sdk/lib/@types/event.js";
 import { CryptoEvent, VerificationPhase, VerificationRequestEvent, VerifierEvent } from "matrix-js-sdk/lib/crypto-api/index.js";
+import { RoomMemberEvent } from "matrix-js-sdk/lib/models/room-member.js";
 import { VerificationMethod } from "matrix-js-sdk/lib/types.js";
 import { decodeRecoveryKey } from "matrix-js-sdk/lib/crypto-api/recovery-key.js";
 
@@ -273,8 +275,101 @@ function bodyFromContent(content) {
   return "";
 }
 
-function nativeMessageFromEvent(event) {
-  if (!event || event.getType?.() !== "m.room.message") {
+export function typingNamesForRoom(room, currentUserId = client?.getUserId?.() || "") {
+  return room.getJoinedMembers?.()
+    .filter((member) => member?.typing && member.userId !== currentUserId)
+    .map((member) => member.name || member.userId)
+    .filter(Boolean)
+    || [];
+}
+
+export function typingSummaryFromNames(names) {
+  if (!Array.isArray(names) || !names.length) {
+    return "";
+  }
+  if (names.length === 1) {
+    return `${names[0]} is typing`;
+  }
+  if (names.length === 2) {
+    return `${names[0]} and ${names[1]} are typing`;
+  }
+  return `${names[0]}, ${names[1]}, and ${names.length - 2} more are typing`;
+}
+
+function relationContent(event) {
+  return event?.getContent?.()?.["m.relates_to"] || {};
+}
+
+function reactionFromRelationEvent(event) {
+  const content = relationContent(event);
+  const key = String(content.key || "").trim();
+  if (!key || content.rel_type !== RelationType.Annotation) {
+    return null;
+  }
+  return {
+    key,
+    sender: event.getSender?.() || "",
+    eventId: event.getId?.() || "",
+  };
+}
+
+function aggregatedReactionEntries(event) {
+  const annotations = event.getUnsigned?.()?.["m.relations"]?.[RelationType.Annotation];
+  const chunks = Array.isArray(annotations?.chunk) ? annotations.chunk : [];
+  return chunks
+    .map((entry) => ({
+      key: String(entry?.key || "").trim(),
+      count: Number(entry?.count || 0),
+      reactedByMe: !!entry?.current_user_participated,
+    }))
+    .filter((entry) => entry.key && entry.count > 0);
+}
+
+export function reactionEntriesFromEvents(events, currentUserId = "") {
+  const byKey = new Map();
+  for (const event of events || []) {
+    const reaction = reactionFromRelationEvent(event);
+    if (!reaction) {
+      continue;
+    }
+    const previous = byKey.get(reaction.key) || {
+      key: reaction.key,
+      count: 0,
+      reactedByMe: false,
+      ownEventId: "",
+    };
+    previous.count += 1;
+    if (reaction.sender === currentUserId) {
+      previous.reactedByMe = true;
+      previous.ownEventId = reaction.eventId;
+    }
+    byKey.set(reaction.key, previous);
+  }
+  return Array.from(byKey.values()).sort((left, right) => right.count - left.count || left.key.localeCompare(right.key));
+}
+
+function reactionEntriesForEvent(room, event) {
+  const eventId = event.getId?.() || "";
+  const fromRelations = room?.relations
+    ?.getChildEventsForEvent(eventId, RelationType.Annotation, EventType.Reaction)
+    ?.getRelations?.() || [];
+  const liveEntries = reactionEntriesFromEvents(fromRelations, client?.getUserId?.() || "");
+  const byKey = new Map(liveEntries.map((entry) => [entry.key, entry]));
+  for (const entry of aggregatedReactionEntries(event)) {
+    if (!byKey.has(entry.key)) {
+      byKey.set(entry.key, {
+        key: entry.key,
+        count: entry.count,
+        reactedByMe: entry.reactedByMe,
+        ownEventId: "",
+      });
+    }
+  }
+  return Array.from(byKey.values()).sort((left, right) => right.count - left.count || left.key.localeCompare(right.key));
+}
+
+function nativeMessageFromEvent(event, room) {
+  if (!event || event.getType?.() !== EventType.RoomMessage) {
     return null;
   }
   const content = event.getContent?.() || {};
@@ -286,10 +381,12 @@ function nativeMessageFromEvent(event) {
     return null;
   }
   return {
+    eventId: event.getId?.() || "",
     sender: event.getSender?.() || "Matrix",
     time: messageTime(event),
     bodyMarkdown: body,
     outbound: event.getSender?.() === client?.getUserId?.(),
+    reactions: reactionEntriesForEvent(room, event),
   };
 }
 
@@ -302,15 +399,17 @@ function snapshotPayload() {
     .map((room) => {
       const events = room.getLiveTimeline().getEvents();
       const messages = events
-        .map(nativeMessageFromEvent)
+        .map((event) => nativeMessageFromEvent(event, room))
         .filter(Boolean)
         .slice(-80);
       const subtitle = messages.length ? messages[messages.length - 1].bodyMarkdown : "";
       const title = room.name || room.roomId;
+      const typingSummary = typingSummaryFromNames(typingNamesForRoom(room));
       return {
         id: room.roomId,
         title,
         subtitle,
+        typingSummary,
         initials: roomInitials(title),
         unreadCount: room.getUnreadNotificationCount?.() || 0,
         encrypted: room.hasEncryptionStateEvent?.() || false,
@@ -436,6 +535,7 @@ function installListeners() {
   });
   client.on(sdk.RoomEvent.Timeline, () => emitSnapshot());
   client.on(sdk.MatrixEventEvent.Decrypted, () => emitSnapshot());
+  client.on(RoomMemberEvent.Typing, () => emitSnapshot());
   client.on(CryptoEvent.VerificationRequestReceived, (request) => {
     trackVerificationRequest(request, "incoming");
   });
@@ -695,6 +795,57 @@ async function sendText(payload) {
   emitSnapshot();
 }
 
+function reactionEventForUser(room, eventId, key) {
+  const relations = room?.relations
+    ?.getChildEventsForEvent(eventId, RelationType.Annotation, EventType.Reaction)
+    ?.getRelations?.() || [];
+  const currentUserId = client?.getUserId?.() || "";
+  return relations.find((event) => {
+    const reaction = reactionFromRelationEvent(event);
+    return reaction?.key === key && reaction.sender === currentUserId && reaction.eventId;
+  }) || null;
+}
+
+async function sendReaction(payload) {
+  if (!client) {
+    throw new Error("Matrix runtime is not signed in.");
+  }
+  const roomId = String(payload.roomId || "");
+  const eventId = String(payload.eventId || "");
+  const key = String(payload.key || "").trim();
+  if (!roomId || !eventId || !key) {
+    throw new Error("Room, event, and reaction key are required.");
+  }
+  const room = client.getRoom(roomId);
+  const existing = reactionEventForUser(room, eventId, key);
+  if (existing) {
+    await client.redactEvent(roomId, existing.getId());
+    post("reaction", { roomId, eventId, key, removed: true });
+  } else {
+    await client.sendEvent(roomId, EventType.Reaction, {
+      "m.relates_to": {
+        rel_type: RelationType.Annotation,
+        event_id: eventId,
+        key,
+      },
+    });
+    post("reaction", { roomId, eventId, key, removed: false });
+  }
+  emitSnapshot();
+}
+
+async function sendTyping(payload) {
+  if (!client) {
+    return;
+  }
+  const roomId = String(payload.roomId || "");
+  if (!roomId) {
+    return;
+  }
+  const typing = !!payload.typing;
+  await client.sendTyping(roomId, typing, typing ? 5000 : 0);
+}
+
 async function dispatch(rawCommand) {
   try {
     const command = JSON.parse(rawCommand);
@@ -725,6 +876,10 @@ async function dispatch(rawCommand) {
       emitSnapshot();
     } else if (command.op === "sendText") {
       await sendText(payload);
+    } else if (command.op === "sendReaction") {
+      await sendReaction(payload);
+    } else if (command.op === "sendTyping") {
+      await sendTyping(payload);
     } else {
       throw new Error(`Unknown runtime operation: ${command.op}`);
     }

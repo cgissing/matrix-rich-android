@@ -59,9 +59,10 @@ public final class MatrixRuntimeMapper {
             }
             String title = roomJson.optString("title", roomId);
             String subtitle = roomJson.optString("subtitle");
+            String typingSummary = roomJson.optString("typingSummary");
             String initials = roomJson.optString("initials", initialsFor(title));
             int unread = roomJson.optInt("unreadCount", 0);
-            rooms.add(new NativeRoom(roomId, title, subtitle, initials, unread));
+            rooms.add(new NativeRoom(roomId, title, subtitle, typingSummary, initials, unread));
 
             List<NativeMessage> messages = new ArrayList<>();
             JSONArray messageArray = roomJson.optJSONArray("messages");
@@ -75,11 +76,32 @@ public final class MatrixRuntimeMapper {
                     if (body.isEmpty()) {
                         continue;
                     }
+                    List<NativeReaction> reactions = new ArrayList<>();
+                    JSONArray reactionArray = messageJson.optJSONArray("reactions");
+                    if (reactionArray != null) {
+                        for (int k = 0; k < reactionArray.length(); k++) {
+                            JSONObject reactionJson = reactionArray.optJSONObject(k);
+                            if (reactionJson == null) {
+                                continue;
+                            }
+                            String key = reactionJson.optString("key");
+                            if (key.isEmpty()) {
+                                continue;
+                            }
+                            reactions.add(new NativeReaction(
+                                    key,
+                                    reactionJson.optInt("count", 0),
+                                    reactionJson.optBoolean("reactedByMe", false)
+                            ));
+                        }
+                    }
                     messages.add(new NativeMessage(
+                            messageJson.optString("eventId"),
                             messageJson.optString("sender", "Matrix"),
                             messageJson.optString("time"),
                             body,
-                            messageJson.optBoolean("outbound", false)
+                            messageJson.optBoolean("outbound", false),
+                            reactions
                     ));
                 }
             }

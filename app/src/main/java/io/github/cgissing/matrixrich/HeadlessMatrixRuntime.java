@@ -131,6 +131,16 @@ public final class HeadlessMatrixRuntime {
         dispatch("sendText", payload);
     }
 
+    public void sendReaction(String roomId, String eventId, String key) {
+        JSONObject payload = put(put(put(new JSONObject(), "roomId", roomId), "eventId", eventId), "key", key);
+        dispatch("sendReaction", payload);
+    }
+
+    public void sendTyping(String roomId, boolean typing) {
+        JSONObject payload = put(put(new JSONObject(), "roomId", roomId), "typing", typing);
+        dispatch("sendTyping", payload);
+    }
+
     public void startOwnVerification() {
         dispatch("startOwnVerification", new JSONObject());
     }
