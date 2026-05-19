@@ -12,6 +12,8 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.text.InputType;
+import android.text.TextUtils;
+import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -25,7 +27,6 @@ import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
-import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -56,8 +57,9 @@ public class MainActivity extends Activity {
         createLayout();
         configureWebView();
         requestNotificationPermission();
-        loadElementWeb();
-        handleIntent(getIntent());
+        if (!handleIntent(getIntent())) {
+            loadElementWeb();
+        }
         updatePushService();
     }
 
@@ -118,31 +120,35 @@ public class MainActivity extends Activity {
         LinearLayout toolbar = new LinearLayout(this);
         toolbar.setOrientation(LinearLayout.HORIZONTAL);
         toolbar.setGravity(Gravity.CENTER_VERTICAL);
-        toolbar.setPadding(dp(10), dp(8), dp(10), dp(8));
-        toolbar.setBackgroundColor(Color.rgb(235, 242, 239));
+        toolbar.setPadding(dp(8), 0, dp(8), 0);
+        toolbar.setBackgroundColor(Color.rgb(247, 249, 248));
 
         statusText = new TextView(this);
         statusText.setText("Element Web");
         statusText.setTextColor(Color.rgb(33, 45, 49));
-        statusText.setTextSize(14);
+        statusText.setTextSize(12);
         statusText.setSingleLine(true);
-        toolbar.addView(statusText, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        statusText.setEllipsize(TextUtils.TruncateAt.END);
+        statusText.setIncludeFontPadding(false);
+        LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+        statusParams.setMarginEnd(dp(6));
+        toolbar.addView(statusText, statusParams);
 
-        Button reload = toolbarButton("Reload");
+        TextView reload = toolbarAction("Reload");
         reload.setOnClickListener((View view) -> {
             if (webView != null) {
                 webView.reload();
             }
         });
-        toolbar.addView(reload, new LinearLayout.LayoutParams(dp(82), dp(42)));
+        toolbar.addView(reload, new LinearLayout.LayoutParams(dp(58), dp(34)));
 
-        Button settings = toolbarButton("Settings");
+        TextView settings = toolbarAction("Settings");
         settings.setOnClickListener((View view) -> showSettingsDialog());
-        LinearLayout.LayoutParams settingsParams = new LinearLayout.LayoutParams(dp(96), dp(42));
-        settingsParams.setMargins(dp(8), 0, 0, 0);
+        LinearLayout.LayoutParams settingsParams = new LinearLayout.LayoutParams(dp(70), dp(34));
+        settingsParams.setMargins(dp(4), 0, 0, 0);
         toolbar.addView(settings, settingsParams);
 
-        root.addView(toolbar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        root.addView(toolbar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42)));
 
         webView = new WebView(this);
         root.addView(webView, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
@@ -177,12 +183,12 @@ public class MainActivity extends Activity {
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                return handleNonHttpUrl(request == null ? null : request.getUrl());
+                return handleNavigation(request == null ? null : request.getUrl());
             }
 
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, String url) {
-                return handleNonHttpUrl(url == null ? null : Uri.parse(url));
+                return handleNavigation(url == null ? null : Uri.parse(url));
             }
 
             @Override
@@ -199,12 +205,12 @@ public class MainActivity extends Activity {
 
             @Override
             public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
-                status("Loading " + hostOf(url));
+                status("Loading");
             }
 
             @Override
             public void onPageFinished(WebView view, String url) {
-                status("Element Web: " + hostOf(url));
+                status("Element Web");
                 view.evaluateJavascript(ElementWebPatch.mobilePatchScript(), null);
             }
 
@@ -287,6 +293,14 @@ public class MainActivity extends Activity {
         }
     }
 
+    private boolean handleNavigation(Uri uri) {
+        if (uri != null && ElementWebConfig.isMobileGuideOrAppHandoffUrl(uri.toString())) {
+            loadElementWeb();
+            return true;
+        }
+        return handleNonHttpUrl(uri);
+    }
+
     private boolean handleNonHttpUrl(Uri uri) {
         if (uri == null) {
             return false;
@@ -308,24 +322,24 @@ public class MainActivity extends Activity {
     }
 
     private void loadElementWeb() {
-        if (webView != null) {
-            webView.loadUrl(ElementWebConfig.initialUrl(this));
-        }
+        loadElementWebUrl(ElementWebConfig.initialUrl(this));
     }
 
-    private void handleIntent(Intent intent) {
+    private boolean handleIntent(Intent intent) {
         if (intent == null || webView == null) {
-            return;
+            return false;
         }
         String openUrl = intent.getStringExtra("open_url");
         if (openUrl != null && !openUrl.trim().isEmpty()) {
             loadTarget(openUrl);
-            return;
+            return true;
         }
         Uri data = intent.getData();
         if (data != null) {
             handleDeepLink(data);
+            return true;
         }
+        return false;
     }
 
     private void handleDeepLink(Uri data) {
@@ -357,7 +371,22 @@ public class MainActivity extends Activity {
             loadElementWeb();
             return;
         }
-        webView.loadUrl(url);
+        loadElementWebUrl(url);
+    }
+
+    private void loadElementWebUrl(String url) {
+        if (webView == null) {
+            return;
+        }
+        CookieManager cookieManager = CookieManager.getInstance();
+        cookieManager.setCookie(url, ElementWebConfig.mobileRedirectBypassCookie(), (Boolean ignored) -> {
+            CookieManager.getInstance().flush();
+            runOnUiThread(() -> {
+                if (webView != null) {
+                    webView.loadUrl(url);
+                }
+            });
+        });
     }
 
     private void showSettingsDialog() {
@@ -405,7 +434,7 @@ public class MainActivity extends Activity {
                             .apply();
                     requestNotificationPermission();
                     updatePushService();
-                    webView.loadUrl(normalizedElementWeb);
+                    loadElementWebUrl(normalizedElementWeb);
                 })
                 .show();
     }
@@ -442,11 +471,21 @@ public class MainActivity extends Activity {
         return view;
     }
 
-    private Button toolbarButton(String text) {
-        Button button = new Button(this);
+    private TextView toolbarAction(String text) {
+        TextView button = new TextView(this);
         button.setText(text);
-        button.setTextSize(12);
-        button.setAllCaps(false);
+        button.setTextSize(11);
+        button.setSingleLine(true);
+        button.setEllipsize(TextUtils.TruncateAt.END);
+        button.setGravity(Gravity.CENTER);
+        button.setTextColor(Color.rgb(33, 45, 49));
+        button.setIncludeFontPadding(false);
+        button.setClickable(true);
+        button.setFocusable(true);
+        TypedValue ripple = new TypedValue();
+        if (getTheme().resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, ripple, true)) {
+            button.setForeground(getDrawable(ripple.resourceId));
+        }
         return button;
     }
 
@@ -482,16 +521,6 @@ public class MainActivity extends Activity {
     private void status(String text) {
         if (statusText != null) {
             statusText.setText(text);
-        }
-    }
-
-    private String hostOf(String url) {
-        try {
-            Uri uri = Uri.parse(url);
-            String host = uri.getHost();
-            return host == null ? "Element Web" : host;
-        } catch (Exception ignored) {
-            return "Element Web";
         }
     }
 
