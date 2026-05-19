@@ -7,7 +7,9 @@ The main chat surface is native Android UI. It does not embed Element Web as the
 ## Current Shape
 
 - Native top app bar, room rail, message timeline, composer, push tab, and settings tab.
-- Password login and access-token login against a Matrix homeserver.
+- Password login with the same simple inputs as Element Web: homeserver or Element Web URL, login name, and password.
+- Advanced token restore is still available, but user ID, device ID, and access token are hidden until that mode is enabled.
+- Element Web deployment URLs such as `https://example.org/element/` are resolved through their `config.json` / Matrix `.well-known` data before the hidden runtime connects.
 - A hidden local WebView runs a bundled Matrix JS SDK runtime for Matrix sync/send and Rust/WASM E2EE. This runtime is not a visible chat UI.
 - Matrix JS SDK snapshots populate the native room rail and timeline.
 - Sending goes through Matrix JS SDK so encrypted rooms are sent through the E2EE stack instead of the raw REST fallback.

@@ -20,6 +20,9 @@ import org.json.JSONObject;
 
 import java.util.ArrayDeque;
 import java.util.Queue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 
 public final class HeadlessMatrixRuntime {
     public interface Listener {
@@ -41,6 +44,7 @@ public final class HeadlessMatrixRuntime {
     private final Activity activity;
     private final Listener listener;
     private final Queue<String> pendingCommands = new ArrayDeque<>();
+    private final ExecutorService resolverExecutor = Executors.newSingleThreadExecutor();
     private WebView webView;
     private boolean ready;
 
@@ -92,25 +96,28 @@ public final class HeadlessMatrixRuntime {
         webView = null;
         ready = false;
         pendingCommands.clear();
+        resolverExecutor.shutdownNow();
     }
 
     public void loginPassword(String homeserver, String account, String password, String recoveryKey) {
-        JSONObject payload = put(put(put(put(new JSONObject(),
-                "homeserver", homeserver),
-                "account", account),
-                "password", password),
-                "recoveryKey", recoveryKey);
-        dispatch("loginPassword", payload);
+        dispatchWithResolvedHomeserver("loginPassword", homeserver, resolvedHomeserver ->
+                put(put(put(put(new JSONObject(),
+                        "homeserver", resolvedHomeserver),
+                        "account", account),
+                        "password", password),
+                        "recoveryKey", recoveryKey)
+        );
     }
 
     public void startSession(String homeserver, String userId, String deviceId, String accessToken, String recoveryKey) {
-        JSONObject payload = put(put(put(put(put(new JSONObject(),
-                "homeserver", homeserver),
-                "userId", userId),
-                "deviceId", deviceId),
-                "accessToken", accessToken),
-                "recoveryKey", recoveryKey);
-        dispatch("startSession", payload);
+        dispatchWithResolvedHomeserver("startSession", homeserver, resolvedHomeserver ->
+                put(put(put(put(put(new JSONObject(),
+                        "homeserver", resolvedHomeserver),
+                        "userId", userId),
+                        "deviceId", deviceId),
+                        "accessToken", accessToken),
+                        "recoveryKey", recoveryKey)
+        );
     }
 
     public void requestSnapshot() {
@@ -130,6 +137,23 @@ public final class HeadlessMatrixRuntime {
             return;
         }
         evaluate(command);
+    }
+
+    private void dispatchWithResolvedHomeserver(String op, String homeserver, PayloadFactory payloadFactory) {
+        try {
+            resolverExecutor.execute(() -> {
+                MatrixHomeserverResolver.Resolved resolved = MatrixHomeserverResolver.resolve(homeserver);
+                JSONObject payload = payloadFactory.create(resolved.baseUrl);
+                activity.runOnUiThread(() -> {
+                    if (!"direct".equals(resolved.source)) {
+                        listener.onRuntimeStatus("Resolved " + resolved.input + " to " + resolved.baseUrl);
+                    }
+                    dispatch(op, payload);
+                });
+            });
+        } catch (RejectedExecutionException e) {
+            listener.onRuntimeError("Matrix runtime is shutting down.");
+        }
     }
 
     private void evaluate(String command) {
@@ -177,6 +201,10 @@ public final class HeadlessMatrixRuntime {
                 listener.onRuntimeError(e.getMessage());
             }
         });
+    }
+
+    private interface PayloadFactory {
+        JSONObject create(String homeserver);
     }
 
     private final class Bridge {

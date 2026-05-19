@@ -66,6 +66,8 @@ public class MainActivity extends Activity {
     private EditText ntfyTopicInput;
     private EditText ntfyTokenInput;
     private CheckBox pushEnabledInput;
+    private CheckBox advancedAccountToggle;
+    private LinearLayout advancedAccountFields;
     private TextView connectionStatus;
     private HeadlessMatrixRuntime matrixRuntime;
 
@@ -73,7 +75,7 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         requestNotificationPermissionIfNeeded();
-        setDisconnectedState("Open Settings to log in or paste an access token.");
+        setDisconnectedState("Open Settings to log in.");
         buildUi();
         showTab(TAB_CHAT);
         handleIntent(getIntent());
@@ -354,7 +356,7 @@ public class MainActivity extends Activity {
         LinearLayout body = panelBody();
 
         body.addView(sectionTitle("Matrix account"));
-        homeserverInput = input("Homeserver URL", AppPrefs.homeserverUrl(this), InputType.TYPE_TEXT_VARIATION_URI);
+        homeserverInput = input("Homeserver / Element Web URL", AppPrefs.homeserverUrl(this), InputType.TYPE_TEXT_VARIATION_URI);
         accountHintInput = input("Login name", AppPrefs.accountHint(this), InputType.TYPE_CLASS_TEXT);
         passwordInput = input("Password, not saved", "", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         userIdInput = input("User ID", AppPrefs.userId(this), InputType.TYPE_CLASS_TEXT);
@@ -365,10 +367,19 @@ public class MainActivity extends Activity {
         body.addView(card(homeserverInput));
         body.addView(card(accountHintInput));
         body.addView(card(passwordInput));
-        body.addView(card(userIdInput));
-        body.addView(card(deviceIdInput));
-        body.addView(card(accessTokenInput));
-        body.addView(card(recoveryKeyInput));
+
+        advancedAccountToggle = checkbox("Advanced token restore", hasAdvancedAccountValues());
+        advancedAccountToggle.setOnClickListener((View v) -> updateAdvancedAccountVisibility());
+        body.addView(card(advancedAccountToggle));
+
+        advancedAccountFields = new LinearLayout(this);
+        advancedAccountFields.setOrientation(LinearLayout.VERTICAL);
+        advancedAccountFields.addView(card(userIdInput));
+        advancedAccountFields.addView(card(deviceIdInput));
+        advancedAccountFields.addView(card(accessTokenInput));
+        advancedAccountFields.addView(card(recoveryKeyInput));
+        body.addView(advancedAccountFields);
+        updateAdvancedAccountVisibility();
         body.addView(card(connectionStatus));
 
         LinearLayout accountActions = new LinearLayout(this);
@@ -585,6 +596,8 @@ public class MainActivity extends Activity {
         deviceIdInput.setText(AppPrefs.deviceId(this));
         accessTokenInput.setText(AppPrefs.accessToken(this));
         recoveryKeyInput.setText(AppPrefs.recoveryKey(this));
+        advancedAccountToggle.setChecked(hasAdvancedAccountValues());
+        updateAdvancedAccountVisibility();
         ntfyServerInput.setText(AppPrefs.ntfyServer(this));
         ntfyTopicInput.setText(AppPrefs.ntfyTopic(this));
         ntfyTokenInput.setText(AppPrefs.ntfyToken(this));
@@ -653,20 +666,20 @@ public class MainActivity extends Activity {
         String password = passwordInput.getText().toString();
         String account = accountHintInput.getText().toString().trim();
         String token = accessTokenInput.getText().toString().trim();
-        if (password.isEmpty()) {
-            if (token.isEmpty()) {
-                Toast.makeText(this, "Enter a password or access token", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            if (userIdInput.getText().toString().trim().isEmpty() || deviceIdInput.getText().toString().trim().isEmpty()) {
-                Toast.makeText(this, "Access-token sign-in needs user ID and device ID for E2EE", Toast.LENGTH_LONG).show();
-                return;
-            }
-            syncNow(true);
+        MatrixLoginFormState formState = new MatrixLoginFormState(
+                account,
+                password,
+                token,
+                userIdInput.getText().toString(),
+                deviceIdInput.getText().toString()
+        );
+        String error = formState.validationError();
+        if (error != null) {
+            Toast.makeText(this, error, Toast.LENGTH_LONG).show();
             return;
         }
-        if (account.isEmpty()) {
-            Toast.makeText(this, "Enter a login name", Toast.LENGTH_SHORT).show();
+        if (!formState.usesPasswordLogin()) {
+            syncNow(true);
             return;
         }
         setBusy("Logging in through Matrix JS E2EE runtime...");
@@ -678,13 +691,26 @@ public class MainActivity extends Activity {
         );
     }
 
+    private void updateAdvancedAccountVisibility() {
+        if (advancedAccountFields != null && advancedAccountToggle != null) {
+            advancedAccountFields.setVisibility(advancedAccountToggle.isChecked() ? View.VISIBLE : View.GONE);
+        }
+    }
+
+    private boolean hasAdvancedAccountValues() {
+        return !AppPrefs.userId(this).trim().isEmpty()
+                || !AppPrefs.deviceId(this).trim().isEmpty()
+                || !AppPrefs.accessToken(this).trim().isEmpty()
+                || !AppPrefs.recoveryKey(this).trim().isEmpty();
+    }
+
     private void syncNow(boolean userInitiated) {
         String token = AppPrefs.accessToken(this).trim();
         if (token.isEmpty()) {
             if (userInitiated) {
-                Toast.makeText(this, "Log in or paste an access token first", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "Log in first", Toast.LENGTH_SHORT).show();
             }
-            setDisconnectedState("Open Settings to log in or paste an access token.");
+            setDisconnectedState("Open Settings to log in.");
             renderRooms();
             renderSelectedRoom();
             return;
@@ -705,7 +731,6 @@ public class MainActivity extends Activity {
                 token,
                 AppPrefs.recoveryKey(this)
         );
-        matrixRuntime.requestSnapshot();
     }
 
     private HeadlessMatrixRuntime.Listener createRuntimeListener() {

@@ -37,12 +37,87 @@ function fail(error) {
   post("error", {}, message);
 }
 
-function normalizeHomeserver(value) {
+export function normalizeHomeserver(value) {
   let result = String(value || "").trim() || "https://matrix.org";
   if (!/^https?:\/\//i.test(result)) {
     result = `https://${result}`;
   }
   return result.replace(/\/+$/, "");
+}
+
+async function fetchJson(url) {
+  if (typeof fetch !== "function") {
+    return null;
+  }
+  try {
+    const response = await fetch(url, {
+      cache: "no-store",
+      credentials: "omit",
+    });
+    if (!response.ok) {
+      return null;
+    }
+    return await response.json();
+  } catch (_) {
+    return null;
+  }
+}
+
+function elementWebHomeserverBase(config) {
+  return config?.default_server_config?.["m.homeserver"]?.base_url
+    || config?.default_hs_url
+    || "";
+}
+
+function wellKnownHomeserverBase(config) {
+  return config?.["m.homeserver"]?.base_url || "";
+}
+
+function isMatrixVersionsResponse(config) {
+  return Array.isArray(config?.versions);
+}
+
+export async function resolveHomeserver(value) {
+  const input = normalizeHomeserver(value);
+  const elementConfig = await fetchJson(`${input}/config.json`);
+  const elementBase = elementWebHomeserverBase(elementConfig);
+  if (elementBase) {
+    const baseUrl = normalizeHomeserver(elementBase);
+    return {
+      input,
+      baseUrl,
+      source: baseUrl === input ? "direct" : "element-web-config",
+    };
+  }
+
+  if (isMatrixVersionsResponse(await fetchJson(`${input}/_matrix/client/versions`))) {
+    return {
+      input,
+      baseUrl: input,
+      source: "direct",
+    };
+  }
+
+  try {
+    const origin = new URL(input).origin;
+    const wellKnown = await fetchJson(`${origin}/.well-known/matrix/client`);
+    const wellKnownBase = wellKnownHomeserverBase(wellKnown);
+    if (wellKnownBase) {
+      const baseUrl = normalizeHomeserver(wellKnownBase);
+      return {
+        input,
+        baseUrl,
+        source: baseUrl === input ? "direct" : "well-known",
+      };
+    }
+  } catch (_) {
+  }
+
+  return {
+    input,
+    baseUrl: input,
+    source: "direct",
+  };
 }
 
 function cleanId(value) {
@@ -192,7 +267,11 @@ async function unlockBackupIfPossible() {
 }
 
 async function startSession(payload) {
-  const homeserver = normalizeHomeserver(payload.homeserver);
+  const resolvedHomeserver = await resolveHomeserver(payload.homeserver);
+  const homeserver = resolvedHomeserver.baseUrl;
+  if (resolvedHomeserver.source !== "direct") {
+    status(`Resolved ${resolvedHomeserver.input} to ${homeserver}`);
+  }
   const accessToken = String(payload.accessToken || "").trim();
   const userId = String(payload.userId || "").trim();
   const deviceId = String(payload.deviceId || "").trim();
@@ -248,7 +327,11 @@ async function startSession(payload) {
 }
 
 async function loginPassword(payload) {
-  const homeserver = normalizeHomeserver(payload.homeserver);
+  const resolvedHomeserver = await resolveHomeserver(payload.homeserver);
+  const homeserver = resolvedHomeserver.baseUrl;
+  if (resolvedHomeserver.source !== "direct") {
+    status(`Resolved ${resolvedHomeserver.input} to ${homeserver}`);
+  }
   recoveryKey = String(payload.recoveryKey || "");
   const loginClient = sdk.createClient({ baseUrl: homeserver });
   const result = await loginClient.loginWithPassword(payload.account, payload.password);

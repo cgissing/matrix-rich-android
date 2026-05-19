@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
-    "check": "node --check src/matrix-runtime.js && npm run build && node scripts/assert-build.mjs"
+    "check": "node --check src/matrix-runtime.js && node --test test/*.test.mjs && npm run build && node scripts/assert-build.mjs"
   },
   "dependencies": {
     "@matrix-org/matrix-sdk-crypto-wasm": "18.3.0",
