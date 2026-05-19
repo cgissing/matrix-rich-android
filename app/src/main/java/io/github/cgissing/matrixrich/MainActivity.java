@@ -33,8 +33,7 @@ import com.google.zxing.EncodeHintType;
 import com.google.zxing.WriterException;
 import com.google.zxing.common.BitMatrix;
 import com.google.zxing.qrcode.QRCodeWriter;
-import com.google.zxing.integration.android.IntentIntegrator;
-import com.google.zxing.integration.android.IntentResult;
+import com.journeyapps.barcodescanner.CaptureActivity;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -46,6 +45,13 @@ import java.util.Map;
 public class MainActivity extends Activity {
     private static final int REQUEST_NOTIFICATIONS = 1002;
     private static final int REQUEST_CAMERA = 1003;
+    private static final int REQUEST_VERIFICATION_QR_SCAN = 1004;
+    private static final String ZXING_SCAN_ACTION = "com.google.zxing.client.android.SCAN";
+    private static final String ZXING_SCAN_FORMATS = "SCAN_FORMATS";
+    private static final String ZXING_PROMPT_MESSAGE = "PROMPT_MESSAGE";
+    private static final String ZXING_BEEP_ENABLED = "BEEP_ENABLED";
+    private static final String ZXING_SCAN_RESULT = "SCAN_RESULT";
+    private static final String ZXING_SCAN_RESULT_BYTES = "SCAN_RESULT_BYTES";
     private static final int TAB_CHAT = 0;
     private static final int TAB_PUSH = 1;
     private static final int TAB_SETTINGS = 2;
@@ -122,9 +128,8 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        IntentResult scanResult = IntentIntegrator.parseActivityResult(requestCode, resultCode, data);
-        if (scanResult != null) {
-            handleVerificationQrScan(scanResult);
+        if (requestCode == REQUEST_VERIFICATION_QR_SCAN) {
+            handleVerificationQrScan(resultCode, data);
             return;
         }
         super.onActivityResult(requestCode, resultCode, data);
@@ -775,22 +780,27 @@ public class MainActivity extends Activity {
     }
 
     private void launchVerificationQrScanner() {
-        IntentIntegrator integrator = new IntentIntegrator(this);
-        integrator.setDesiredBarcodeFormats(IntentIntegrator.QR_CODE);
-        integrator.setPrompt("Scan Matrix verification QR");
-        integrator.setBeepEnabled(false);
-        integrator.setOrientationLocked(false);
-        integrator.initiateScan();
+        Intent intent = new Intent(this, CaptureActivity.class);
+        intent.setAction(ZXING_SCAN_ACTION);
+        intent.putExtra(ZXING_SCAN_FORMATS, "QR_CODE");
+        intent.putExtra(ZXING_PROMPT_MESSAGE, "Scan Matrix verification QR");
+        intent.putExtra(ZXING_BEEP_ENABLED, false);
+        startActivityForResult(intent, REQUEST_VERIFICATION_QR_SCAN);
     }
 
-    private void handleVerificationQrScan(IntentResult result) {
-        if (result.getContents() == null) {
+    private void handleVerificationQrScan(int resultCode, Intent data) {
+        if (resultCode != RESULT_OK || data == null) {
             Toast.makeText(this, "QR scan cancelled", Toast.LENGTH_SHORT).show();
             return;
         }
-        byte[] rawBytes = result.getRawBytes();
+        byte[] rawBytes = data.getByteArrayExtra(ZXING_SCAN_RESULT_BYTES);
+        String contents = data.getStringExtra(ZXING_SCAN_RESULT);
         if (rawBytes == null || rawBytes.length == 0) {
-            rawBytes = result.getContents().getBytes(StandardCharsets.ISO_8859_1);
+            if (contents == null || contents.isEmpty()) {
+                Toast.makeText(this, "No QR payload returned", Toast.LENGTH_LONG).show();
+                return;
+            }
+            rawBytes = contents.getBytes(StandardCharsets.ISO_8859_1);
         }
         String qrCodeBase64 = Base64.encodeToString(rawBytes, Base64.NO_WRAP);
         setBusy("Scanning verification QR...");
