@@ -16,6 +16,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.text.Editable;
 import android.text.InputType;
+import android.text.TextUtils;
 import android.text.TextWatcher;
 import android.util.Base64;
 import android.view.Gravity;
@@ -25,7 +26,6 @@ import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.FrameLayout;
-import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -56,7 +56,7 @@ public class MainActivity extends Activity {
     private static final String ZXING_BEEP_ENABLED = "BEEP_ENABLED";
     private static final String ZXING_SCAN_RESULT = "SCAN_RESULT";
     private static final String ZXING_SCAN_RESULT_BYTES = "SCAN_RESULT_BYTES";
-    private static final String[] QUICK_REACTIONS = {"👍", "❤️", "😂", "🎉", "👀"};
+    private static final String[] QUICK_REACTIONS = {"\uD83D\uDC4D", "\u2764\uFE0F", "\uD83D\uDE02", "\uD83C\uDF89", "\uD83D\uDC40"};
     private static final int TAB_CHAT = 0;
     private static final int TAB_PUSH = 1;
     private static final int TAB_SETTINGS = 2;
@@ -72,7 +72,12 @@ public class MainActivity extends Activity {
     private View chatPanel;
     private View pushPanel;
     private View settingsPanel;
-    private LinearLayout roomRail;
+    private View bottomNavigation;
+    private Button appBarBack;
+    private View roomListPanel;
+    private View conversationPanel;
+    private LinearLayout roomList;
+    private TextView roomListEmptyText;
     private LinearLayout timeline;
     private EditText composerInput;
     private TextView typingNotice;
@@ -114,6 +119,7 @@ public class MainActivity extends Activity {
     private HeadlessMatrixRuntime matrixRuntime;
     private String activeTypingRoomId = "";
     private long lastTypingSentAt = 0L;
+    private boolean conversationVisible = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -157,6 +163,10 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
+        if (currentTab == TAB_CHAT && conversationVisible) {
+            showRoomListSurface();
+            return;
+        }
         if (currentTab != TAB_CHAT) {
             showTab(TAB_CHAT);
             return;
@@ -180,7 +190,8 @@ public class MainActivity extends Activity {
         content.addView(settingsPanel, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         root.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
 
-        root.addView(createBottomNavigation(), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        bottomNavigation = createBottomNavigation();
+        root.addView(bottomNavigation, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         matrixRuntime = new HeadlessMatrixRuntime(this, createRuntimeListener());
         matrixRuntime.attach(root);
         setContentView(root);
@@ -202,10 +213,21 @@ public class MainActivity extends Activity {
         appBar.setPadding(dp(16), dp(10), dp(12), dp(8));
         appBar.setBackgroundColor(Color.WHITE);
 
+        appBarBack = actionButton("Back");
+        appBarBack.setVisibility(View.GONE);
+        appBarBack.setOnClickListener((View v) -> showRoomListSurface());
+        LinearLayout.LayoutParams backParams = new LinearLayout.LayoutParams(dp(66), dp(40));
+        backParams.setMargins(0, 0, dp(8), 0);
+        appBar.addView(appBarBack, backParams);
+
         LinearLayout titleBox = new LinearLayout(this);
         titleBox.setOrientation(LinearLayout.VERTICAL);
         title = text("Messages", 20, Color.rgb(20, 23, 26), true);
+        title.setSingleLine(true);
+        title.setEllipsize(TextUtils.TruncateAt.END);
         subtitle = text("", 12, Color.rgb(91, 101, 106), false);
+        subtitle.setSingleLine(true);
+        subtitle.setEllipsize(TextUtils.TruncateAt.END);
         titleBox.addView(title);
         titleBox.addView(subtitle);
         appBar.addView(titleBox, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
@@ -246,19 +268,46 @@ public class MainActivity extends Activity {
         wakeNotice.setVisibility(View.GONE);
         root.addView(wakeNotice, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        HorizontalScrollView roomScroll = new HorizontalScrollView(this);
-        roomScroll.setHorizontalScrollBarEnabled(false);
-        roomRail = new LinearLayout(this);
-        roomRail.setOrientation(LinearLayout.HORIZONTAL);
-        roomRail.setPadding(dp(12), dp(10), dp(12), dp(8));
-        roomScroll.addView(roomRail);
-        root.addView(roomScroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        FrameLayout chatStack = new FrameLayout(this);
+        roomListPanel = createRoomListPanel();
+        conversationPanel = createConversationPanel();
+        chatStack.addView(roomListPanel, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        chatStack.addView(conversationPanel, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        root.addView(chatStack, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+
+        renderRooms();
+        renderSelectedRoom();
+        showRoomListSurface();
+        return root;
+    }
+
+    private View createRoomListPanel() {
+        ScrollView timelineScroll = new ScrollView(this);
+        timelineScroll.setFillViewport(false);
+        roomList = new LinearLayout(this);
+        roomList.setOrientation(LinearLayout.VERTICAL);
+        roomList.setPadding(dp(10), dp(6), dp(10), dp(18));
+        timelineScroll.addView(roomList, new ScrollView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        roomListEmptyText = text("No rooms yet. Open Settings to log in, then sync.", 14, Color.rgb(91, 101, 106), false);
+        roomListEmptyText.setGravity(Gravity.CENTER);
+        roomListEmptyText.setPadding(dp(24), dp(48), dp(24), dp(48));
+
+        FrameLayout panel = new FrameLayout(this);
+        panel.addView(timelineScroll, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        panel.addView(roomListEmptyText, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
+        return panel;
+    }
+
+    private View createConversationPanel() {
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
 
         ScrollView timelineScroll = new ScrollView(this);
         timelineScroll.setFillViewport(true);
         timeline = new LinearLayout(this);
         timeline.setOrientation(LinearLayout.VERTICAL);
-        timeline.setPadding(dp(14), dp(4), dp(14), dp(16));
+        timeline.setPadding(dp(12), dp(10), dp(12), dp(16));
         timelineScroll.addView(timeline, new ScrollView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         root.addView(timelineScroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
 
@@ -269,8 +318,6 @@ public class MainActivity extends Activity {
         root.addView(typingNotice, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         root.addView(createComposer(), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        renderRooms();
-        renderSelectedRoom();
         return root;
     }
 
@@ -311,33 +358,38 @@ public class MainActivity extends Activity {
     }
 
     private void renderRooms() {
-        if (roomRail == null) {
+        if (roomList == null) {
             return;
         }
-        roomRail.removeAllViews();
+        roomList.removeAllViews();
+        if (roomListEmptyText != null) {
+            roomListEmptyText.setVisibility(rooms.isEmpty() ? View.VISIBLE : View.GONE);
+        }
         for (NativeRoom room : rooms) {
-            Button button = navButton(room.initials + "  " + room.title + (room.unreadCount > 0 ? "  " + room.unreadCount : ""));
             boolean selected = selectedRoom != null && selectedRoom.id.equals(room.id);
-            tintRoomButton(button, selected);
-            button.setOnClickListener((View v) -> {
+            View row = roomListRow(room, selected);
+            row.setOnClickListener((View v) -> {
                 stopTypingNow();
                 selectedRoom = room;
+                showConversationSurface();
                 renderRooms();
                 renderSelectedRoom();
             });
-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44));
-            params.setMargins(0, 0, dp(8), 0);
-            roomRail.addView(button, params);
+            roomList.addView(row);
         }
+        updateChatChrome();
     }
 
     private void renderSelectedRoom() {
-        if (timeline == null || selectedRoom == null) {
+        if (timeline == null) {
             return;
         }
         timeline.removeAllViews();
-        title.setText(selectedRoom.title);
-        subtitle.setText(selectedRoom.typingSummary.isEmpty() ? selectedRoom.subtitle : selectedRoom.typingSummary);
+        if (selectedRoom == null) {
+            timeline.addView(emptyTimeline("Select a room to open the conversation."));
+            updateChatChrome();
+            return;
+        }
         if (typingNotice != null) {
             typingNotice.setText(selectedRoom.typingSummary);
             typingNotice.setVisibility(selectedRoom.typingSummary.isEmpty() ? View.GONE : View.VISIBLE);
@@ -350,6 +402,138 @@ public class MainActivity extends Activity {
         for (NativeMessage message : messages) {
             timeline.addView(messageBubble(message));
         }
+        updateChatChrome();
+    }
+
+    private View roomListRow(NativeRoom room, boolean selected) {
+        NativeRoomListItem item = NativeRoomListItem.from(room, selected);
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(10), dp(9), dp(10), dp(9));
+        row.setBackground(roomRowBackground(item.selected));
+
+        TextView avatar = avatarView(item);
+        LinearLayout.LayoutParams avatarParams = new LinearLayout.LayoutParams(dp(44), dp(44));
+        avatarParams.setMargins(0, 0, dp(12), 0);
+        row.addView(avatar, avatarParams);
+
+        LinearLayout textBox = new LinearLayout(this);
+        textBox.setOrientation(LinearLayout.VERTICAL);
+        TextView titleView = text(item.title, 16, Color.rgb(20, 23, 26), true);
+        titleView.setSingleLine(true);
+        titleView.setEllipsize(TextUtils.TruncateAt.END);
+        TextView previewView = text(item.preview.isEmpty() ? "No recent messages" : item.preview, 13, item.typing ? Color.rgb(20, 103, 84) : Color.rgb(91, 101, 106), false);
+        previewView.setSingleLine(true);
+        previewView.setEllipsize(TextUtils.TruncateAt.END);
+        textBox.addView(titleView);
+        textBox.addView(previewView);
+        row.addView(textBox, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+
+        if (item.hasUnread()) {
+            TextView badge = unreadBadge(item.unreadLabel);
+            LinearLayout.LayoutParams badgeParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(24));
+            badgeParams.setMargins(dp(10), 0, 0, 0);
+            row.addView(badge, badgeParams);
+        }
+
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(68));
+        params.setMargins(0, 0, 0, dp(4));
+        row.setLayoutParams(params);
+        return row;
+    }
+
+    private TextView avatarView(NativeRoomListItem item) {
+        TextView avatar = text(item.initials, 15, Color.WHITE, true);
+        avatar.setGravity(Gravity.CENTER);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setShape(GradientDrawable.OVAL);
+        bg.setColor(item.selected ? Color.rgb(20, 103, 84) : Color.rgb(78, 94, 102));
+        avatar.setBackground(bg);
+        avatar.setSingleLine(true);
+        return avatar;
+    }
+
+    private TextView unreadBadge(String label) {
+        TextView badge = text(label, 12, Color.WHITE, true);
+        badge.setGravity(Gravity.CENTER);
+        badge.setMinWidth(dp(24));
+        badge.setPadding(dp(7), 0, dp(7), 0);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius(dp(12));
+        bg.setColor(Color.rgb(20, 103, 84));
+        badge.setBackground(bg);
+        return badge;
+    }
+
+    private View emptyTimeline(String value) {
+        TextView empty = text(value, 14, Color.rgb(91, 101, 106), false);
+        empty.setGravity(Gravity.CENTER);
+        empty.setPadding(dp(24), dp(56), dp(24), dp(56));
+        return empty;
+    }
+
+    private GradientDrawable roomRowBackground(boolean selected) {
+        GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius(dp(8));
+        bg.setColor(selected ? Color.rgb(232, 247, 242) : Color.WHITE);
+        bg.setStroke(1, selected ? Color.rgb(176, 224, 210) : Color.rgb(224, 231, 228));
+        return bg;
+    }
+
+    private void showRoomListSurface() {
+        stopTypingNow();
+        conversationVisible = false;
+        if (roomListPanel != null) {
+            roomListPanel.setVisibility(View.VISIBLE);
+        }
+        if (conversationPanel != null) {
+            conversationPanel.setVisibility(View.GONE);
+        }
+        updateChatChrome();
+    }
+
+    private void showConversationSurface() {
+        conversationVisible = true;
+        if (roomListPanel != null) {
+            roomListPanel.setVisibility(View.GONE);
+        }
+        if (conversationPanel != null) {
+            conversationPanel.setVisibility(View.VISIBLE);
+        }
+        updateChatChrome();
+    }
+
+    private void updateChatChrome() {
+        if (currentTab != TAB_CHAT || title == null || subtitle == null) {
+            return;
+        }
+        if (conversationVisible && selectedRoom != null) {
+            title.setText(selectedRoom.title);
+            subtitle.setText(chatSubtitle(selectedRoom));
+            if (appBarBack != null) {
+                appBarBack.setVisibility(View.VISIBLE);
+            }
+            if (bottomNavigation != null) {
+                bottomNavigation.setVisibility(View.GONE);
+            }
+            return;
+        }
+        title.setText("Messages");
+        subtitle.setText(rooms.isEmpty() ? accountStatus() : rooms.size() + " rooms");
+        if (appBarBack != null) {
+            appBarBack.setVisibility(View.GONE);
+        }
+        if (bottomNavigation != null) {
+            bottomNavigation.setVisibility(View.VISIBLE);
+        }
+    }
+
+    private String chatSubtitle(NativeRoom room) {
+        if (!room.typingSummary.isEmpty()) {
+            return room.typingSummary;
+        }
+        return room.subtitle;
     }
 
     private View messageBubble(NativeMessage message) {
@@ -361,12 +545,17 @@ public class MainActivity extends Activity {
         bubble.setOrientation(LinearLayout.VERTICAL);
         bubble.setPadding(dp(12), dp(9), dp(12), dp(10));
         bubble.setBackground(bubbleBackground(message.outbound));
+        int maxContentWidth = Math.max(dp(220), getResources().getDisplayMetrics().widthPixels - dp(96));
 
         TextView meta = text(message.sender + "  " + message.time, 12, message.outbound ? Color.rgb(37, 90, 77) : Color.rgb(91, 101, 106), true);
+        meta.setMaxWidth(maxContentWidth);
+        meta.setSingleLine(true);
+        meta.setEllipsize(TextUtils.TruncateAt.END);
         bubble.addView(meta, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         TextView body = text("", 15, Color.rgb(22, 28, 31), false);
         body.setTextIsSelectable(true);
+        body.setMaxWidth(maxContentWidth);
         body.setPadding(0, dp(5), 0, 0);
         RichMarkdownRenderer.render(RichMarkdownRenderer.create(this, body), body, message.bodyMarkdown);
         bubble.addView(body, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -729,12 +918,25 @@ public class MainActivity extends Activity {
         tintNav(pushNav, tab == TAB_PUSH);
         tintNav(settingsNav, tab == TAB_SETTINGS);
         if (tab == TAB_CHAT) {
+            renderRooms();
             renderSelectedRoom();
         } else if (tab == TAB_PUSH) {
+            if (appBarBack != null) {
+                appBarBack.setVisibility(View.GONE);
+            }
+            if (bottomNavigation != null) {
+                bottomNavigation.setVisibility(View.VISIBLE);
+            }
             title.setText("Push");
             subtitle.setText(AppPrefs.pushEnabled(this) ? "ntfy listener enabled" : "ntfy listener disabled");
             updatePushStatus();
         } else {
+            if (appBarBack != null) {
+                appBarBack.setVisibility(View.GONE);
+            }
+            if (bottomNavigation != null) {
+                bottomNavigation.setVisibility(View.VISIBLE);
+            }
             title.setText("Settings");
             subtitle.setText("Matrix account and notification bridge");
             refreshSettingsFields();
@@ -746,15 +948,6 @@ public class MainActivity extends Activity {
         bg.setCornerRadius(dp(8));
         bg.setColor(selected ? Color.rgb(218, 246, 237) : Color.TRANSPARENT);
         button.setTextColor(selected ? Color.rgb(7, 99, 76) : Color.rgb(76, 88, 92));
-        button.setBackground(bg);
-    }
-
-    private void tintRoomButton(Button button, boolean selected) {
-        GradientDrawable bg = new GradientDrawable();
-        bg.setCornerRadius(dp(18));
-        bg.setColor(selected ? Color.rgb(24, 129, 104) : Color.WHITE);
-        bg.setStroke(1, selected ? Color.rgb(24, 129, 104) : Color.rgb(220, 228, 225));
-        button.setTextColor(selected ? Color.WHITE : Color.rgb(42, 54, 58));
         button.setBackground(bg);
     }
 
@@ -1197,6 +1390,7 @@ public class MainActivity extends Activity {
     }
 
     private void setDisconnectedState(String message) {
+        conversationVisible = false;
         rooms.clear();
         messagesByRoom.clear();
         NativeRoom setup = new NativeRoom("setup", "Not connected", message, "M", 0);
@@ -1205,6 +1399,12 @@ public class MainActivity extends Activity {
         setupMessages.add(new NativeMessage("Matrix Rich", "", message, false));
         messagesByRoom.put(setup.id, setupMessages);
         selectedRoom = setup;
+        if (roomListPanel != null) {
+            roomListPanel.setVisibility(View.VISIBLE);
+        }
+        if (conversationPanel != null) {
+            conversationPanel.setVisibility(View.GONE);
+        }
     }
 
     private String accountStatus() {
