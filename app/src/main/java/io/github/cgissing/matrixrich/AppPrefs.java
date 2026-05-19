@@ -7,6 +7,10 @@ final class AppPrefs {
     static final String PREFS = "matrix_rich";
     static final String KEY_HOMESERVER_URL = "homeserver_url";
     static final String KEY_ACCOUNT_HINT = "account_hint";
+    static final String KEY_USER_ID = "user_id";
+    static final String KEY_ACCESS_TOKEN = "access_token";
+    static final String KEY_DEVICE_ID = "device_id";
+    static final String KEY_SYNC_TOKEN = "sync_token";
     static final String KEY_PUSH_ENABLED = "push_enabled";
     static final String KEY_NTFY_SERVER = "ntfy_server";
     static final String KEY_NTFY_TOPIC = "ntfy_topic";
@@ -28,6 +32,22 @@ final class AppPrefs {
 
     static String accountHint(Context context) {
         return get(context).getString(KEY_ACCOUNT_HINT, "");
+    }
+
+    static String userId(Context context) {
+        return get(context).getString(KEY_USER_ID, "");
+    }
+
+    static String accessToken(Context context) {
+        return get(context).getString(KEY_ACCESS_TOKEN, "");
+    }
+
+    static String deviceId(Context context) {
+        return get(context).getString(KEY_DEVICE_ID, "");
+    }
+
+    static String syncToken(Context context) {
+        return get(context).getString(KEY_SYNC_TOKEN, "");
     }
 
     static boolean pushEnabled(Context context) {

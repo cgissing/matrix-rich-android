@@ -16,9 +16,11 @@ Message bodies are rendered through Markwon. The renderer enables Markdown, tabl
 
 The ntfy foreground service remains independent from the Matrix engine. It listens to a configured ntfy JSON stream, shows native Android notifications, and wakes the native chat surface through `matrixrich://` or regular URL payloads.
 
-## Runtime Boundary
+## Matrix Runtime
 
-The current implementation contains the native shell, rich renderer, and push bridge. Live Matrix sync and E2EE should be added behind this native UI boundary. The visible UI should consume room summaries, timeline events, and send results from that runtime instead of embedding a web client.
+The app uses the Matrix Client-Server API behind the native UI. It supports password login, saved access-token login, `/sync`, native room summaries, native timeline messages, and text-message sending from the composer.
+
+Encrypted events are currently surfaced as encrypted placeholders. A full E2EE runtime should replace that placeholder path without changing the native UI boundary.
 
 ## Non-Goals
 

@@ -1,12 +1,15 @@
 # Matrix Rich Android
 
-Matrix Rich Android is an Android-native Matrix client experiment focused on LLM-style rich message reading: Markdown, tables, formulas, and ntfy wake notifications.
+Matrix Rich Android is an Android-native Matrix client focused on LLM-style rich message reading: Markdown, tables, formulas, Matrix sync/send, and ntfy wake notifications.
 
 The main chat surface is native Android UI. It does not embed Element Web as the visible room timeline.
 
 ## Current Shape
 
 - Native top app bar, room rail, message timeline, composer, push tab, and settings tab.
+- Password login and access-token login against a Matrix homeserver.
+- Matrix `/sync` populates the native room rail and timeline.
+- Sending uses `/_matrix/client/v3/rooms/{roomId}/send/m.room.message/{txnId}`.
 - Message bodies render through Markwon with table and LaTeX plugins.
 - Inline `$...$` formulas are accepted and normalized for the native LaTeX renderer.
 - `$$...$$` display formulas are preserved.
@@ -21,10 +24,10 @@ Element Web remains useful as a reference for E2EE behavior and rendering expect
 
 ## Matrix Engine Status
 
-This repository currently has the native Android shell, rich message renderer, and ntfy wake path. The Matrix sync/E2EE engine still needs to be wired behind the native UI. The intended boundary is:
+This repository currently uses the Matrix Client-Server API directly for password login, token login, `/sync`, and sending text messages. The intended boundary remains:
 
 ```text
-Matrix sync/E2EE runtime
+Matrix runtime
         |
         v
 Native room list + native timeline + native composer
@@ -33,7 +36,7 @@ Native room list + native timeline + native composer
 Markwon table/formula renderer
 ```
 
-The Android UI should stay native while the protocol runtime is added behind it.
+The Android UI stays native. End-to-end encrypted rooms are detected as encrypted events and shown as encrypted placeholders until an E2EE runtime is added.
 
 ## ntfy Setup
 
@@ -63,6 +66,7 @@ For Matrix notifications, your homeserver, bot, or gateway still needs to publis
 ## Privacy Notes
 
 - Do not commit ntfy bearer tokens, homeserver access tokens, Matrix recovery keys, signing keys, or generated APK signing material.
+- The debug app stores Matrix access tokens in Android `SharedPreferences`; release hardening should move secrets to encrypted storage.
 - GitHub Actions builds an unsigned debug APK artifact.
 - Release signing should use GitHub Actions secrets later, not files committed to the repository.
 

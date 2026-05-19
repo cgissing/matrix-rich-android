@@ -26,7 +26,9 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public class MainActivity extends Activity {
     private static final int REQUEST_NOTIFICATIONS = 1002;
@@ -35,6 +37,7 @@ public class MainActivity extends Activity {
     private static final int TAB_SETTINGS = 2;
 
     private final List<NativeRoom> rooms = new ArrayList<>();
+    private final Map<String, List<NativeMessage>> messagesByRoom = new HashMap<>();
 
     private NativeRoom selectedRoom;
     private int currentTab = TAB_CHAT;
@@ -54,21 +57,27 @@ public class MainActivity extends Activity {
     private Button settingsNav;
     private EditText homeserverInput;
     private EditText accountHintInput;
+    private EditText userIdInput;
+    private EditText passwordInput;
+    private EditText accessTokenInput;
     private EditText ntfyServerInput;
     private EditText ntfyTopicInput;
     private EditText ntfyTokenInput;
     private CheckBox pushEnabledInput;
+    private TextView connectionStatus;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         requestNotificationPermissionIfNeeded();
-        rooms.addAll(DemoMatrixState.rooms());
-        selectedRoom = rooms.isEmpty() ? null : rooms.get(0);
+        setDisconnectedState("Open Settings to log in or paste an access token.");
         buildUi();
         showTab(TAB_CHAT);
         handleIntent(getIntent());
         updatePushService();
+        if (!AppPrefs.accessToken(this).trim().isEmpty()) {
+            syncNow(false);
+        }
     }
 
     @Override
@@ -122,6 +131,9 @@ public class MainActivity extends Activity {
         titleBox.addView(subtitle);
         appBar.addView(titleBox, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
 
+        Button sync = actionButton("Sync");
+        sync.setOnClickListener((View v) -> syncNow(true));
+        appBar.addView(sync, new LinearLayout.LayoutParams(dp(82), dp(40)));
         return appBar;
     }
 
@@ -226,7 +238,12 @@ public class MainActivity extends Activity {
         timeline.removeAllViews();
         title.setText(selectedRoom.title);
         subtitle.setText(selectedRoom.subtitle);
-        for (NativeMessage message : DemoMatrixState.messagesFor(selectedRoom.id)) {
+        List<NativeMessage> messages = messagesByRoom.get(selectedRoom.id);
+        if (messages == null || messages.isEmpty()) {
+            messages = new ArrayList<>();
+            messages.add(new NativeMessage("Matrix Rich", "", "No timeline events loaded yet.", false));
+        }
+        for (NativeMessage message : messages) {
             timeline.addView(messageBubble(message));
         }
     }
@@ -270,10 +287,27 @@ public class MainActivity extends Activity {
         if (draft.isEmpty()) {
             return;
         }
-        NativeMessage message = new NativeMessage("You", "now", draft, true);
-        timeline.addView(messageBubble(message));
+        if (selectedRoom == null || "setup".equals(selectedRoom.id)) {
+            Toast.makeText(this, "Log in before sending", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        String token = AppPrefs.accessToken(this).trim();
+        if (token.isEmpty()) {
+            Toast.makeText(this, "Missing Matrix access token", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        NativeRoom targetRoom = selectedRoom;
         composerInput.setText("");
-        Toast.makeText(this, "Draft rendered locally", Toast.LENGTH_SHORT).show();
+        setBusy("Sending...");
+        runMatrixTask(() -> {
+            String txnId = "mra" + System.currentTimeMillis();
+            new MatrixApiClient(AppPrefs.homeserverUrl(this)).sendTextMessage(token, targetRoom.id, draft, txnId);
+            runOnUiThread(() -> {
+                addLocalMessage(targetRoom.id, new NativeMessage("You", "now", draft, true));
+                clearBusy();
+                syncNow(false);
+            });
+        });
     }
 
     private View createPushPanel() {
@@ -316,9 +350,30 @@ public class MainActivity extends Activity {
 
         body.addView(sectionTitle("Matrix account"));
         homeserverInput = input("Homeserver URL", AppPrefs.homeserverUrl(this), InputType.TYPE_TEXT_VARIATION_URI);
-        accountHintInput = input("Account hint", AppPrefs.accountHint(this), InputType.TYPE_CLASS_TEXT);
+        accountHintInput = input("Login name", AppPrefs.accountHint(this), InputType.TYPE_CLASS_TEXT);
+        passwordInput = input("Password, not saved", "", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        userIdInput = input("User ID", AppPrefs.userId(this), InputType.TYPE_CLASS_TEXT);
+        accessTokenInput = input("Access token", AppPrefs.accessToken(this), InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        connectionStatus = text(accountStatus(), 14, Color.rgb(44, 52, 56), false);
         body.addView(card(homeserverInput));
         body.addView(card(accountHintInput));
+        body.addView(card(passwordInput));
+        body.addView(card(userIdInput));
+        body.addView(card(accessTokenInput));
+        body.addView(card(connectionStatus));
+
+        LinearLayout accountActions = new LinearLayout(this);
+        accountActions.setOrientation(LinearLayout.HORIZONTAL);
+        Button login = actionButton("Login");
+        login.setOnClickListener((View v) -> loginOrUseToken());
+        Button sync = actionButton("Sync");
+        sync.setOnClickListener((View v) -> {
+            saveSettings(false);
+            syncNow(true);
+        });
+        accountActions.addView(login, new LinearLayout.LayoutParams(0, dp(44), 1));
+        accountActions.addView(sync, new LinearLayout.LayoutParams(0, dp(44), 1));
+        body.addView(accountActions);
 
         body.addView(sectionTitle("ntfy push"));
         ntfyServerInput = input("ntfy server", AppPrefs.ntfyServer(this), InputType.TYPE_TEXT_VARIATION_URI);
@@ -331,7 +386,7 @@ public class MainActivity extends Activity {
         body.addView(card(pushEnabledInput));
 
         Button save = actionButton("Save settings");
-        save.setOnClickListener((View v) -> saveSettings());
+        save.setOnClickListener((View v) -> saveSettings(true));
         body.addView(save, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
 
         scroll.addView(body);
@@ -464,6 +519,7 @@ public class MainActivity extends Activity {
             }
             showTab(TAB_CHAT);
             showWakeNotice(openUrl);
+            syncNow(false);
             return;
         }
         Uri data = intent.getData();
@@ -474,6 +530,7 @@ public class MainActivity extends Activity {
             showTab(TAB_CHAT);
             String target = data.getQueryParameter("url");
             showWakeNotice(target == null || target.isEmpty() ? data.toString() : target);
+            syncNow(false);
             return;
         }
         if ("ntfy".equals(data.getScheme())) {
@@ -514,17 +571,23 @@ public class MainActivity extends Activity {
         }
         homeserverInput.setText(AppPrefs.homeserverUrl(this));
         accountHintInput.setText(AppPrefs.accountHint(this));
+        passwordInput.setText("");
+        userIdInput.setText(AppPrefs.userId(this));
+        accessTokenInput.setText(AppPrefs.accessToken(this));
         ntfyServerInput.setText(AppPrefs.ntfyServer(this));
         ntfyTopicInput.setText(AppPrefs.ntfyTopic(this));
         ntfyTokenInput.setText(AppPrefs.ntfyToken(this));
         pushEnabledInput.setChecked(AppPrefs.pushEnabled(this));
+        connectionStatus.setText(accountStatus());
     }
 
-    private void saveSettings() {
+    private void saveSettings(boolean toast) {
         SharedPreferences prefs = AppPrefs.get(this);
         prefs.edit()
                 .putString(AppPrefs.KEY_HOMESERVER_URL, homeserverInput.getText().toString().trim())
                 .putString(AppPrefs.KEY_ACCOUNT_HINT, accountHintInput.getText().toString().trim())
+                .putString(AppPrefs.KEY_USER_ID, userIdInput.getText().toString().trim())
+                .putString(AppPrefs.KEY_ACCESS_TOKEN, accessTokenInput.getText().toString().trim())
                 .putString(AppPrefs.KEY_NTFY_SERVER, ntfyServerInput.getText().toString().trim())
                 .putString(AppPrefs.KEY_NTFY_TOPIC, ntfyTopicInput.getText().toString().trim())
                 .putString(AppPrefs.KEY_NTFY_TOKEN, ntfyTokenInput.getText().toString().trim())
@@ -532,7 +595,9 @@ public class MainActivity extends Activity {
                 .apply();
         updatePushService();
         showTab(TAB_CHAT);
-        Toast.makeText(this, "Settings saved", Toast.LENGTH_SHORT).show();
+        if (toast) {
+            Toast.makeText(this, "Settings saved", Toast.LENGTH_SHORT).show();
+        }
     }
 
     private void updatePushService() {
@@ -568,5 +633,181 @@ public class MainActivity extends Activity {
 
     private int dp(int value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    private void loginOrUseToken() {
+        saveSettings(false);
+        String password = passwordInput.getText().toString();
+        String account = accountHintInput.getText().toString().trim();
+        String token = accessTokenInput.getText().toString().trim();
+        if (password.isEmpty()) {
+            if (token.isEmpty()) {
+                Toast.makeText(this, "Enter a password or access token", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            syncNow(true);
+            return;
+        }
+        if (account.isEmpty()) {
+            Toast.makeText(this, "Enter a login name", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        setBusy("Logging in...");
+        runMatrixTask(() -> {
+            MatrixLoginResult login = new MatrixApiClient(homeserverInput.getText().toString()).loginPassword(account, password);
+            AppPrefs.get(this).edit()
+                    .putString(AppPrefs.KEY_ACCESS_TOKEN, login.accessToken)
+                    .putString(AppPrefs.KEY_USER_ID, login.userId)
+                    .putString(AppPrefs.KEY_DEVICE_ID, login.deviceId)
+                    .putString(AppPrefs.KEY_SYNC_TOKEN, "")
+                    .apply();
+            runOnUiThread(() -> {
+                accessTokenInput.setText(login.accessToken);
+                userIdInput.setText(login.userId);
+                passwordInput.setText("");
+                connectionStatus.setText(accountStatus());
+                clearBusy();
+                syncNow(true);
+            });
+        });
+    }
+
+    private void syncNow(boolean userInitiated) {
+        String token = AppPrefs.accessToken(this).trim();
+        if (token.isEmpty()) {
+            if (userInitiated) {
+                Toast.makeText(this, "Log in or paste an access token first", Toast.LENGTH_SHORT).show();
+            }
+            setDisconnectedState("Open Settings to log in or paste an access token.");
+            renderRooms();
+            renderSelectedRoom();
+            return;
+        }
+        setBusy("Syncing...");
+        runMatrixTask(() -> {
+            MatrixSyncResult result = new MatrixApiClient(AppPrefs.homeserverUrl(this))
+                    .sync(token, AppPrefs.syncToken(this), 0, AppPrefs.userId(this));
+            if (!result.nextBatch.isEmpty()) {
+                AppPrefs.get(this).edit().putString(AppPrefs.KEY_SYNC_TOKEN, result.nextBatch).apply();
+            }
+            runOnUiThread(() -> {
+                applySyncResult(result);
+                clearBusy();
+            });
+        });
+    }
+
+    private void applySyncResult(MatrixSyncResult result) {
+        if (result.rooms.isEmpty() && rooms.size() == 1 && "setup".equals(rooms.get(0).id)) {
+            setDisconnectedState("Connected, but no joined rooms were returned by sync.");
+        } else {
+            for (NativeRoom room : result.rooms) {
+                upsertRoom(room);
+                mergeMessages(room.id, result.messagesFor(room.id));
+            }
+            if ((selectedRoom == null || "setup".equals(selectedRoom.id)) && !rooms.isEmpty()) {
+                selectedRoom = rooms.get(0);
+            }
+        }
+        renderRooms();
+        renderSelectedRoom();
+        if (connectionStatus != null) {
+            connectionStatus.setText(accountStatus());
+        }
+    }
+
+    private void upsertRoom(NativeRoom room) {
+        for (int i = 0; i < rooms.size(); i++) {
+            if (rooms.get(i).id.equals(room.id)) {
+                rooms.set(i, room);
+                return;
+            }
+        }
+        if (rooms.size() == 1 && "setup".equals(rooms.get(0).id)) {
+            rooms.clear();
+            messagesByRoom.clear();
+        }
+        rooms.add(room);
+    }
+
+    private void mergeMessages(String roomId, List<NativeMessage> incoming) {
+        if (incoming == null || incoming.isEmpty()) {
+            return;
+        }
+        List<NativeMessage> existing = messagesByRoom.get(roomId);
+        if (existing == null) {
+            existing = new ArrayList<>();
+            messagesByRoom.put(roomId, existing);
+        }
+        existing.addAll(incoming);
+        while (existing.size() > 80) {
+            existing.remove(0);
+        }
+    }
+
+    private void addLocalMessage(String roomId, NativeMessage message) {
+        List<NativeMessage> existing = messagesByRoom.get(roomId);
+        if (existing == null) {
+            existing = new ArrayList<>();
+            messagesByRoom.put(roomId, existing);
+        }
+        existing.add(message);
+        renderSelectedRoom();
+    }
+
+    private void setDisconnectedState(String message) {
+        rooms.clear();
+        messagesByRoom.clear();
+        NativeRoom setup = new NativeRoom("setup", "Not connected", message, "M", 0);
+        rooms.add(setup);
+        List<NativeMessage> setupMessages = new ArrayList<>();
+        setupMessages.add(new NativeMessage("Matrix Rich", "", message, false));
+        messagesByRoom.put(setup.id, setupMessages);
+        selectedRoom = setup;
+    }
+
+    private String accountStatus() {
+        String userId = AppPrefs.userId(this);
+        String token = AppPrefs.accessToken(this);
+        if (!userId.trim().isEmpty()) {
+            return "Signed in as " + userId;
+        }
+        if (!token.trim().isEmpty()) {
+            return "Access token saved";
+        }
+        return "Not signed in";
+    }
+
+    private void setBusy(String value) {
+        if (wakeNotice != null) {
+            wakeNotice.setText(value);
+            wakeNotice.setVisibility(View.VISIBLE);
+        }
+    }
+
+    private void clearBusy() {
+        if (wakeNotice != null) {
+            wakeNotice.setVisibility(View.GONE);
+        }
+    }
+
+    private void runMatrixTask(MatrixTask task) {
+        new Thread(() -> {
+            try {
+                task.run();
+            } catch (Exception e) {
+                runOnUiThread(() -> {
+                    clearBusy();
+                    Toast.makeText(this, e.getMessage(), Toast.LENGTH_LONG).show();
+                    if (connectionStatus != null) {
+                        connectionStatus.setText(e.getMessage());
+                    }
+                });
+            }
+        }, "matrix-api").start();
+    }
+
+    private interface MatrixTask {
+        void run() throws Exception;
     }
 }
