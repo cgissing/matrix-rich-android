@@ -16,11 +16,9 @@ final class AppPrefs {
     static final String KEY_NTFY_SERVER = "ntfy_server";
     static final String KEY_NTFY_TOPIC = "ntfy_topic";
     static final String KEY_NTFY_TOKEN = "ntfy_token";
-    static final String KEY_ELEMENT_WEB_URL = "element_web_url";
 
     static final String DEFAULT_HOMESERVER_URL = "https://matrix.org";
     static final String DEFAULT_NTFY_SERVER = "https://ntfy.sh";
-    static final String DEFAULT_ELEMENT_WEB_URL = "https://app.element.io/";
 
     private AppPrefs() {
     }
@@ -71,9 +69,5 @@ final class AppPrefs {
 
     static String ntfyToken(Context context) {
         return get(context).getString(KEY_NTFY_TOKEN, "");
-    }
-
-    static String elementWebUrl(Context context) {
-        return get(context).getString(KEY_ELEMENT_WEB_URL, DEFAULT_ELEMENT_WEB_URL);
     }
 }

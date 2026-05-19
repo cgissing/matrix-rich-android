@@ -2,65 +2,131 @@ package io.github.cgissing.matrixrich;
 
 import android.Manifest;
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
 import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.text.Editable;
 import android.text.InputType;
-import android.text.TextUtils;
-import android.util.TypedValue;
+import android.text.TextWatcher;
+import android.util.Base64;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
-import android.webkit.CookieManager;
-import android.webkit.PermissionRequest;
-import android.webkit.ValueCallback;
-import android.webkit.WebChromeClient;
-import android.webkit.WebResourceError;
-import android.webkit.WebResourceRequest;
-import android.webkit.WebResourceResponse;
-import android.webkit.WebSettings;
-import android.webkit.WebView;
-import android.webkit.WebViewClient;
+import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
+import android.widget.FrameLayout;
+import android.widget.HorizontalScrollView;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import java.io.ByteArrayInputStream;
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.net.HttpURLConnection;
-import java.net.URL;
+import com.google.zxing.BarcodeFormat;
+import com.google.zxing.EncodeHintType;
+import com.google.zxing.WriterException;
+import com.google.zxing.common.BitMatrix;
+import com.google.zxing.qrcode.QRCodeWriter;
+import com.journeyapps.barcodescanner.CaptureActivity;
+
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.EnumMap;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 public class MainActivity extends Activity {
-    private static final int REQUEST_FILE_CHOOSER = 40;
-    private static final int REQUEST_CAMERA_PERMISSION = 41;
-    private static final int REQUEST_NOTIFICATION_PERMISSION = 42;
+    private static final int REQUEST_NOTIFICATIONS = 1002;
+    private static final int REQUEST_CAMERA = 1003;
+    private static final int REQUEST_VERIFICATION_QR_SCAN = 1004;
+    private static final String ZXING_SCAN_ACTION = "com.google.zxing.client.android.SCAN";
+    private static final String ZXING_SCAN_FORMATS = "SCAN_FORMATS";
+    private static final String ZXING_PROMPT_MESSAGE = "PROMPT_MESSAGE";
+    private static final String ZXING_BEEP_ENABLED = "BEEP_ENABLED";
+    private static final String ZXING_SCAN_RESULT = "SCAN_RESULT";
+    private static final String ZXING_SCAN_RESULT_BYTES = "SCAN_RESULT_BYTES";
+    private static final String[] QUICK_REACTIONS = {"👍", "❤️", "😂", "🎉", "👀"};
+    private static final int TAB_CHAT = 0;
+    private static final int TAB_PUSH = 1;
+    private static final int TAB_SETTINGS = 2;
 
-    private WebView webView;
-    private TextView statusText;
-    private ValueCallback<Uri[]> filePathCallback;
-    private PermissionRequest pendingPermissionRequest;
+    private final List<NativeRoom> rooms = new ArrayList<>();
+    private final Map<String, List<NativeMessage>> messagesByRoom = new HashMap<>();
+    private final Handler typingHandler = new Handler(Looper.getMainLooper());
+    private final Runnable stopTypingRunnable = this::stopTypingNow;
+
+    private NativeRoom selectedRoom;
+    private int currentTab = TAB_CHAT;
+    private FrameLayout content;
+    private View chatPanel;
+    private View pushPanel;
+    private View settingsPanel;
+    private LinearLayout roomRail;
+    private LinearLayout timeline;
+    private EditText composerInput;
+    private TextView typingNotice;
+    private TextView title;
+    private TextView subtitle;
+    private TextView wakeNotice;
+    private TextView pushStatus;
+    private Button chatNav;
+    private Button pushNav;
+    private Button settingsNav;
+    private EditText homeserverInput;
+    private EditText accountHintInput;
+    private EditText userIdInput;
+    private EditText deviceIdInput;
+    private EditText passwordInput;
+    private EditText accessTokenInput;
+    private EditText recoveryKeyInput;
+    private EditText ntfyServerInput;
+    private EditText ntfyTopicInput;
+    private EditText ntfyTokenInput;
+    private CheckBox pushEnabledInput;
+    private CheckBox advancedAccountToggle;
+    private LinearLayout advancedAccountFields;
+    private TextView connectionStatus;
+    private TextView verificationStatus;
+    private Button verificationStartButton;
+    private Button verificationAcceptButton;
+    private Button verificationSasButton;
+    private Button verificationQrButton;
+    private Button verificationQrScanButton;
+    private Button verificationMatchButton;
+    private Button verificationMismatchButton;
+    private Button verificationQrConfirmButton;
+    private Button verificationCancelButton;
+    private ImageView verificationQrImage;
+    private View verificationQrCard;
+    private String renderedVerificationQrBase64 = "";
+    private MatrixVerificationState verificationState = MatrixVerificationState.empty();
+    private HeadlessMatrixRuntime matrixRuntime;
+    private String activeTypingRoomId = "";
+    private long lastTypingSentAt = 0L;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        createLayout();
-        configureWebView();
-        requestNotificationPermission();
-        if (!handleIntent(getIntent())) {
-            loadElementWeb();
-        }
+        requestNotificationPermissionIfNeeded();
+        setDisconnectedState("Open Settings to log in.");
+        buildUi();
+        showTab(TAB_CHAT);
+        handleIntent(getIntent());
         updatePushService();
+        if (!AppPrefs.accessToken(this).trim().isEmpty()) {
+            syncNow(false);
+        }
     }
 
     @Override
@@ -71,460 +137,1099 @@ public class MainActivity extends Activity {
     }
 
     @Override
-    protected void onDestroy() {
-        if (webView != null) {
-            webView.destroy();
-            webView = null;
-        }
-        super.onDestroy();
-    }
-
-    @Override
-    public void onBackPressed() {
-        if (webView != null && webView.canGoBack()) {
-            webView.goBack();
-            return;
-        }
-        super.onBackPressed();
-    }
-
-    @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode != REQUEST_FILE_CHOOSER || filePathCallback == null) {
+        if (requestCode == REQUEST_VERIFICATION_QR_SCAN) {
+            handleVerificationQrScan(resultCode, data);
             return;
         }
-        Uri[] result = WebChromeClient.FileChooserParams.parseResult(resultCode, data);
-        filePathCallback.onReceiveValue(result);
-        filePathCallback = null;
+        super.onActivityResult(requestCode, resultCode, data);
     }
 
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == REQUEST_CAMERA_PERMISSION && pendingPermissionRequest != null) {
-            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                pendingPermissionRequest.grant(new String[]{PermissionRequest.RESOURCE_VIDEO_CAPTURE});
-            } else {
-                pendingPermissionRequest.deny();
-            }
-            pendingPermissionRequest = null;
+        if (requestCode == REQUEST_CAMERA
+                && grantResults.length > 0
+                && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            launchVerificationQrScanner();
         }
     }
 
-    private void createLayout() {
+    @Override
+    public void onBackPressed() {
+        if (currentTab != TAB_CHAT) {
+            showTab(TAB_CHAT);
+            return;
+        }
+        super.onBackPressed();
+    }
+
+    private void buildUi() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(Color.rgb(247, 249, 248));
+        root.setBackgroundColor(Color.rgb(245, 247, 248));
 
-        LinearLayout toolbar = new LinearLayout(this);
-        toolbar.setOrientation(LinearLayout.HORIZONTAL);
-        toolbar.setGravity(Gravity.CENTER_VERTICAL);
-        toolbar.setPadding(dp(8), 0, dp(8), 0);
-        toolbar.setBackgroundColor(Color.rgb(247, 249, 248));
+        root.addView(createAppBar(), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        statusText = new TextView(this);
-        statusText.setText("Element Web");
-        statusText.setTextColor(Color.rgb(33, 45, 49));
-        statusText.setTextSize(12);
-        statusText.setSingleLine(true);
-        statusText.setEllipsize(TextUtils.TruncateAt.END);
-        statusText.setIncludeFontPadding(false);
-        LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
-        statusParams.setMarginEnd(dp(6));
-        toolbar.addView(statusText, statusParams);
+        content = new FrameLayout(this);
+        chatPanel = createChatPanel();
+        pushPanel = createPushPanel();
+        settingsPanel = createSettingsPanel();
+        content.addView(chatPanel, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        content.addView(pushPanel, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        content.addView(settingsPanel, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        root.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
 
-        TextView reload = toolbarAction("Reload");
-        reload.setOnClickListener((View view) -> {
-            if (webView != null) {
-                webView.reload();
-            }
-        });
-        toolbar.addView(reload, new LinearLayout.LayoutParams(dp(58), dp(34)));
-
-        TextView settings = toolbarAction("Settings");
-        settings.setOnClickListener((View view) -> showSettingsDialog());
-        LinearLayout.LayoutParams settingsParams = new LinearLayout.LayoutParams(dp(70), dp(34));
-        settingsParams.setMargins(dp(4), 0, 0, 0);
-        toolbar.addView(settings, settingsParams);
-
-        root.addView(toolbar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42)));
-
-        webView = new WebView(this);
-        root.addView(webView, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        root.addView(createBottomNavigation(), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        matrixRuntime = new HeadlessMatrixRuntime(this, createRuntimeListener());
+        matrixRuntime.attach(root);
         setContentView(root);
     }
 
-    private void configureWebView() {
-        if (isDebuggable() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-            WebView.setWebContentsDebuggingEnabled(true);
+    @Override
+    protected void onDestroy() {
+        stopTypingNow();
+        if (matrixRuntime != null) {
+            matrixRuntime.destroy();
         }
+        super.onDestroy();
+    }
 
-        WebSettings settings = webView.getSettings();
-        settings.setJavaScriptEnabled(true);
-        settings.setDomStorageEnabled(true);
-        settings.setDatabaseEnabled(true);
-        settings.setMediaPlaybackRequiresUserGesture(false);
-        settings.setLoadWithOverviewMode(true);
-        settings.setUseWideViewPort(true);
-        settings.setSupportZoom(false);
-        settings.setAllowFileAccess(false);
-        settings.setAllowContentAccess(true);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            settings.setSafeBrowsingEnabled(true);
-        }
+    private View createAppBar() {
+        LinearLayout appBar = new LinearLayout(this);
+        appBar.setGravity(Gravity.CENTER_VERTICAL);
+        appBar.setOrientation(LinearLayout.HORIZONTAL);
+        appBar.setPadding(dp(16), dp(10), dp(12), dp(8));
+        appBar.setBackgroundColor(Color.WHITE);
 
-        CookieManager cookieManager = CookieManager.getInstance();
-        cookieManager.setAcceptCookie(true);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            cookieManager.setAcceptThirdPartyCookies(webView, true);
-        }
+        LinearLayout titleBox = new LinearLayout(this);
+        titleBox.setOrientation(LinearLayout.VERTICAL);
+        title = text("Messages", 20, Color.rgb(20, 23, 26), true);
+        subtitle = text("", 12, Color.rgb(91, 101, 106), false);
+        titleBox.addView(title);
+        titleBox.addView(subtitle);
+        appBar.addView(titleBox, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
 
-        webView.setWebViewClient(new WebViewClient() {
+        Button sync = actionButton("Sync");
+        sync.setOnClickListener((View v) -> syncNow(true));
+        appBar.addView(sync, new LinearLayout.LayoutParams(dp(82), dp(40)));
+        return appBar;
+    }
+
+    private View createBottomNavigation() {
+        LinearLayout nav = new LinearLayout(this);
+        nav.setOrientation(LinearLayout.HORIZONTAL);
+        nav.setGravity(Gravity.CENTER);
+        nav.setPadding(dp(8), dp(6), dp(8), dp(8));
+        nav.setBackgroundColor(Color.WHITE);
+
+        chatNav = navButton("Chats");
+        pushNav = navButton("Push");
+        settingsNav = navButton("Settings");
+        chatNav.setOnClickListener((View v) -> showTab(TAB_CHAT));
+        pushNav.setOnClickListener((View v) -> showTab(TAB_PUSH));
+        settingsNav.setOnClickListener((View v) -> showTab(TAB_SETTINGS));
+
+        nav.addView(chatNav, new LinearLayout.LayoutParams(0, dp(44), 1));
+        nav.addView(pushNav, new LinearLayout.LayoutParams(0, dp(44), 1));
+        nav.addView(settingsNav, new LinearLayout.LayoutParams(0, dp(44), 1));
+        return nav;
+    }
+
+    private View createChatPanel() {
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+
+        wakeNotice = text("", 13, Color.rgb(45, 59, 63), false);
+        wakeNotice.setPadding(dp(14), dp(9), dp(14), dp(9));
+        wakeNotice.setBackgroundColor(Color.rgb(226, 244, 238));
+        wakeNotice.setVisibility(View.GONE);
+        root.addView(wakeNotice, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        HorizontalScrollView roomScroll = new HorizontalScrollView(this);
+        roomScroll.setHorizontalScrollBarEnabled(false);
+        roomRail = new LinearLayout(this);
+        roomRail.setOrientation(LinearLayout.HORIZONTAL);
+        roomRail.setPadding(dp(12), dp(10), dp(12), dp(8));
+        roomScroll.addView(roomRail);
+        root.addView(roomScroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        ScrollView timelineScroll = new ScrollView(this);
+        timelineScroll.setFillViewport(true);
+        timeline = new LinearLayout(this);
+        timeline.setOrientation(LinearLayout.VERTICAL);
+        timeline.setPadding(dp(14), dp(4), dp(14), dp(16));
+        timelineScroll.addView(timeline, new ScrollView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        root.addView(timelineScroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+
+        typingNotice = text("", 13, Color.rgb(20, 103, 84), false);
+        typingNotice.setPadding(dp(14), dp(7), dp(14), dp(7));
+        typingNotice.setBackgroundColor(Color.rgb(226, 244, 238));
+        typingNotice.setVisibility(View.GONE);
+        root.addView(typingNotice, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        root.addView(createComposer(), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        renderRooms();
+        renderSelectedRoom();
+        return root;
+    }
+
+    private View createComposer() {
+        LinearLayout composer = new LinearLayout(this);
+        composer.setOrientation(LinearLayout.HORIZONTAL);
+        composer.setGravity(Gravity.CENTER_VERTICAL);
+        composer.setPadding(dp(10), dp(8), dp(10), dp(10));
+        composer.setBackgroundColor(Color.WHITE);
+
+        composerInput = new EditText(this);
+        composerInput.setSingleLine(false);
+        composerInput.setMinLines(1);
+        composerInput.setMaxLines(5);
+        composerInput.setHint("Message");
+        composerInput.setTextSize(15);
+        composerInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        composerInput.addTextChangedListener(new TextWatcher() {
             @Override
-            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                return handleNavigation(request == null ? null : request.getUrl());
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
             }
 
             @Override
-            public boolean shouldOverrideUrlLoading(WebView view, String url) {
-                return handleNavigation(url == null ? null : Uri.parse(url));
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                handleComposerTyping(s);
             }
 
             @Override
-            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
-                Uri uri = request == null ? null : request.getUrl();
-                if (uri != null && "config.json".equals(uri.getLastPathSegment())) {
-                    WebResourceResponse response = patchedConfigResponse(uri);
-                    if (response != null) {
-                        return response;
-                    }
-                }
-                return super.shouldInterceptRequest(view, request);
-            }
-
-            @Override
-            public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
-                status("Loading");
-            }
-
-            @Override
-            public void onPageFinished(WebView view, String url) {
-                status("Element Web");
-                view.evaluateJavascript(ElementWebPatch.mobilePatchScript(), null);
-            }
-
-            @Override
-            public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
-                if (request != null && request.isForMainFrame()) {
-                    status("Load failed");
-                }
+            public void afterTextChanged(Editable s) {
             }
         });
+        composer.addView(composerInput, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
 
-        webView.setWebChromeClient(new WebChromeClient() {
-            @Override
-            public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams params) {
-                if (filePathCallback != null) {
-                    filePathCallback.onReceiveValue(null);
-                }
-                filePathCallback = callback;
-                Intent intent = params == null ? new Intent(Intent.ACTION_GET_CONTENT) : params.createIntent();
-                intent.addCategory(Intent.CATEGORY_OPENABLE);
-                intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
-                try {
-                    startActivityForResult(Intent.createChooser(intent, "Choose file"), REQUEST_FILE_CHOOSER);
-                } catch (Exception e) {
-                    filePathCallback = null;
-                    Toast.makeText(MainActivity.this, "No file picker available", Toast.LENGTH_SHORT).show();
-                    return false;
-                }
-                return true;
-            }
-
-            @Override
-            public void onPermissionRequest(PermissionRequest request) {
-                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
-                    return;
-                }
-                if (wantsVideo(request)) {
-                    if (checkSelfPermissionCompat(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-                        request.grant(new String[]{PermissionRequest.RESOURCE_VIDEO_CAPTURE});
-                    } else {
-                        pendingPermissionRequest = request;
-                        requestPermissions(new String[]{Manifest.permission.CAMERA}, REQUEST_CAMERA_PERMISSION);
-                    }
-                    return;
-                }
-                request.deny();
-            }
-
-            @Override
-            public void onProgressChanged(WebView view, int progress) {
-                if (progress < 100) {
-                    status("Loading " + progress + "%");
-                }
-            }
-        });
+        Button send = actionButton("Send");
+        send.setOnClickListener((View v) -> sendLocalDraft());
+        composer.addView(send, new LinearLayout.LayoutParams(dp(82), dp(46)));
+        return composer;
     }
 
-    private WebResourceResponse patchedConfigResponse(Uri uri) {
-        HttpURLConnection connection = null;
-        try {
-            connection = (HttpURLConnection) new URL(uri.toString()).openConnection();
-            connection.setConnectTimeout(10000);
-            connection.setReadTimeout(10000);
-            connection.setRequestProperty("Accept", "application/json");
-            StringBuilder raw = new StringBuilder();
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    raw.append(line).append('\n');
-                }
-            }
-            byte[] patched = ElementWebConfigJson.withShellDefaults(raw.toString()).getBytes(StandardCharsets.UTF_8);
-            return new WebResourceResponse("application/json", "UTF-8", new ByteArrayInputStream(patched));
-        } catch (Exception ignored) {
-            return null;
-        } finally {
-            if (connection != null) {
-                connection.disconnect();
-            }
-        }
-    }
-
-    private boolean handleNavigation(Uri uri) {
-        if (uri != null && ElementWebConfig.isMobileGuideOrAppHandoffUrl(uri.toString())) {
-            loadElementWeb();
-            return true;
-        }
-        return handleNonHttpUrl(uri);
-    }
-
-    private boolean handleNonHttpUrl(Uri uri) {
-        if (uri == null) {
-            return false;
-        }
-        String scheme = uri.getScheme();
-        if ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme)) {
-            return false;
-        }
-        if ("matrixrich".equalsIgnoreCase(scheme) || "ntfy".equalsIgnoreCase(scheme)) {
-            handleDeepLink(uri);
-            return true;
-        }
-        try {
-            startActivity(new Intent(Intent.ACTION_VIEW, uri));
-            return true;
-        } catch (Exception ignored) {
-            return true;
-        }
-    }
-
-    private void loadElementWeb() {
-        loadElementWebUrl(ElementWebConfig.initialUrl(this));
-    }
-
-    private boolean handleIntent(Intent intent) {
-        if (intent == null || webView == null) {
-            return false;
-        }
-        String openUrl = intent.getStringExtra("open_url");
-        if (openUrl != null && !openUrl.trim().isEmpty()) {
-            loadTarget(openUrl);
-            return true;
-        }
-        Uri data = intent.getData();
-        if (data != null) {
-            handleDeepLink(data);
-            return true;
-        }
-        return false;
-    }
-
-    private void handleDeepLink(Uri data) {
-        if (data == null) {
+    private void renderRooms() {
+        if (roomRail == null) {
             return;
         }
-        String url = data.getQueryParameter("url");
-        if (url != null && !url.trim().isEmpty()) {
-            loadTarget(url);
-            return;
-        }
-        if ("ntfy".equalsIgnoreCase(data.getScheme())) {
-            if (webView != null) {
-                webView.evaluateJavascript(ElementWebPatch.mobilePatchScript(), null);
-                webView.reload();
-            }
-            return;
-        }
-        loadElementWeb();
-    }
-
-    private void loadTarget(String rawUrl) {
-        String url = rawUrl == null ? "" : rawUrl.trim();
-        if (url.isEmpty()) {
-            loadElementWeb();
-            return;
-        }
-        if (!url.startsWith("http://") && !url.startsWith("https://")) {
-            loadElementWeb();
-            return;
-        }
-        loadElementWebUrl(url);
-    }
-
-    private void loadElementWebUrl(String url) {
-        if (webView == null) {
-            return;
-        }
-        CookieManager cookieManager = CookieManager.getInstance();
-        cookieManager.setCookie(url, ElementWebConfig.mobileRedirectBypassCookie(), (Boolean ignored) -> {
-            CookieManager.getInstance().flush();
-            runOnUiThread(() -> {
-                if (webView != null) {
-                    webView.loadUrl(url);
-                }
+        roomRail.removeAllViews();
+        for (NativeRoom room : rooms) {
+            Button button = navButton(room.initials + "  " + room.title + (room.unreadCount > 0 ? "  " + room.unreadCount : ""));
+            boolean selected = selectedRoom != null && selectedRoom.id.equals(room.id);
+            tintRoomButton(button, selected);
+            button.setOnClickListener((View v) -> {
+                stopTypingNow();
+                selectedRoom = room;
+                renderRooms();
+                renderSelectedRoom();
             });
-        });
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44));
+            params.setMargins(0, 0, dp(8), 0);
+            roomRail.addView(button, params);
+        }
     }
 
-    private void showSettingsDialog() {
-        SharedPreferences prefs = AppPrefs.get(this);
-
-        LinearLayout body = new LinearLayout(this);
-        body.setOrientation(LinearLayout.VERTICAL);
-        int padding = dp(18);
-        body.setPadding(padding, padding, padding, padding);
-
-        EditText elementWeb = field("Element Web URL", ElementWebConfig.normalizeElementWebUrl(AppPrefs.elementWebUrl(this)));
-        EditText ntfyServer = field("ntfy server", AppPrefs.ntfyServer(this));
-        EditText ntfyTopic = field("ntfy topic", AppPrefs.ntfyTopic(this));
-        EditText ntfyToken = field("ntfy token", AppPrefs.ntfyToken(this));
-        ntfyToken.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-
-        CheckBox pushEnabled = new CheckBox(this);
-        pushEnabled.setText("Enable ntfy foreground listener");
-        pushEnabled.setChecked(AppPrefs.pushEnabled(this));
-        pushEnabled.setTextColor(Color.rgb(33, 45, 49));
-
-        body.addView(label("Element Web"));
-        body.addView(elementWeb);
-        body.addView(label("Push"));
-        body.addView(ntfyServer);
-        body.addView(ntfyTopic);
-        body.addView(ntfyToken);
-        body.addView(pushEnabled);
-
-        ScrollView scroll = new ScrollView(this);
-        scroll.addView(body);
-
-        new AlertDialog.Builder(this)
-                .setTitle("Matrix Rich Shell")
-                .setView(scroll)
-                .setNegativeButton("Cancel", null)
-                .setPositiveButton("Save", (dialog, which) -> {
-                    String normalizedElementWeb = ElementWebConfig.normalizeElementWebUrl(elementWeb.getText().toString());
-                    prefs.edit()
-                            .putString(AppPrefs.KEY_ELEMENT_WEB_URL, normalizedElementWeb)
-                            .putString(AppPrefs.KEY_NTFY_SERVER, ntfyServer.getText().toString().trim())
-                            .putString(AppPrefs.KEY_NTFY_TOPIC, ntfyTopic.getText().toString().trim())
-                            .putString(AppPrefs.KEY_NTFY_TOKEN, ntfyToken.getText().toString().trim())
-                            .putBoolean(AppPrefs.KEY_PUSH_ENABLED, pushEnabled.isChecked())
-                            .apply();
-                    requestNotificationPermission();
-                    updatePushService();
-                    loadElementWebUrl(normalizedElementWeb);
-                })
-                .show();
+    private void renderSelectedRoom() {
+        if (timeline == null || selectedRoom == null) {
+            return;
+        }
+        timeline.removeAllViews();
+        title.setText(selectedRoom.title);
+        subtitle.setText(selectedRoom.typingSummary.isEmpty() ? selectedRoom.subtitle : selectedRoom.typingSummary);
+        if (typingNotice != null) {
+            typingNotice.setText(selectedRoom.typingSummary);
+            typingNotice.setVisibility(selectedRoom.typingSummary.isEmpty() ? View.GONE : View.VISIBLE);
+        }
+        List<NativeMessage> messages = messagesByRoom.get(selectedRoom.id);
+        if (messages == null || messages.isEmpty()) {
+            messages = new ArrayList<>();
+            messages.add(new NativeMessage("Matrix Rich", "", "No timeline events loaded yet.", false));
+        }
+        for (NativeMessage message : messages) {
+            timeline.addView(messageBubble(message));
+        }
     }
 
-    private void updatePushService() {
-        Intent service = new Intent(this, NtfyPushService.class);
-        if (AppPrefs.pushEnabled(this) && !AppPrefs.ntfyTopic(this).trim().isEmpty()) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(service);
-            } else {
-                startService(service);
+    private View messageBubble(NativeMessage message) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(message.outbound ? Gravity.END : Gravity.START);
+
+        LinearLayout bubble = new LinearLayout(this);
+        bubble.setOrientation(LinearLayout.VERTICAL);
+        bubble.setPadding(dp(12), dp(9), dp(12), dp(10));
+        bubble.setBackground(bubbleBackground(message.outbound));
+
+        TextView meta = text(message.sender + "  " + message.time, 12, message.outbound ? Color.rgb(37, 90, 77) : Color.rgb(91, 101, 106), true);
+        bubble.addView(meta, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView body = text("", 15, Color.rgb(22, 28, 31), false);
+        body.setTextIsSelectable(true);
+        body.setPadding(0, dp(5), 0, 0);
+        RichMarkdownRenderer.render(RichMarkdownRenderer.create(this, body), body, message.bodyMarkdown);
+        bubble.addView(body, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        addReactionRows(bubble, message);
+
+        LinearLayout.LayoutParams bubbleParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        bubbleParams.weight = 0;
+        bubbleParams.setMargins(message.outbound ? dp(54) : 0, 0, message.outbound ? 0 : dp(54), dp(10));
+        row.addView(bubble, bubbleParams);
+        return row;
+    }
+
+    private void addReactionRows(LinearLayout bubble, NativeMessage message) {
+        if (!message.reactions.isEmpty()) {
+            LinearLayout reactionRow = new LinearLayout(this);
+            reactionRow.setOrientation(LinearLayout.HORIZONTAL);
+            reactionRow.setPadding(0, dp(7), 0, 0);
+            for (NativeReaction reaction : message.reactions) {
+                Button chip = reactionButton(reaction.key + " " + reaction.count, reaction.reactedByMe);
+                chip.setOnClickListener((View v) -> sendReaction(message, reaction.key));
+                LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36));
+                params.setMargins(0, 0, dp(6), 0);
+                reactionRow.addView(chip, params);
             }
-        } else {
-            stopService(service);
+            bubble.addView(reactionRow, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        }
+
+        if (!message.eventId.isEmpty() && selectedRoom != null && !"setup".equals(selectedRoom.id)) {
+            LinearLayout quickRow = new LinearLayout(this);
+            quickRow.setOrientation(LinearLayout.HORIZONTAL);
+            quickRow.setPadding(0, dp(5), 0, 0);
+            for (String key : QUICK_REACTIONS) {
+                Button button = reactionButton(key, false);
+                button.setOnClickListener((View v) -> sendReaction(message, key));
+                LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(42), dp(34));
+                params.setMargins(0, 0, dp(5), 0);
+                quickRow.addView(button, params);
+            }
+            bubble.addView(quickRow, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         }
     }
 
-    private EditText field(String hint, String value) {
-        EditText field = new EditText(this);
-        field.setHint(hint);
-        field.setText(value == null ? "" : value);
-        field.setSingleLine(true);
-        field.setTextSize(14);
-        field.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
-        return field;
-    }
-
-    private TextView label(String text) {
-        TextView view = new TextView(this);
-        view.setText(text);
-        view.setTextColor(Color.rgb(22, 28, 31));
-        view.setTextSize(13);
-        view.setPadding(0, dp(12), 0, dp(2));
-        return view;
-    }
-
-    private TextView toolbarAction(String text) {
-        TextView button = new TextView(this);
-        button.setText(text);
-        button.setTextSize(11);
-        button.setSingleLine(true);
-        button.setEllipsize(TextUtils.TruncateAt.END);
-        button.setGravity(Gravity.CENTER);
-        button.setTextColor(Color.rgb(33, 45, 49));
-        button.setIncludeFontPadding(false);
-        button.setClickable(true);
-        button.setFocusable(true);
-        TypedValue ripple = new TypedValue();
-        if (getTheme().resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, ripple, true)) {
-            button.setForeground(getDrawable(ripple.resourceId));
-        }
+    private Button reactionButton(String label, boolean selected) {
+        Button button = actionButton(label);
+        button.setTextSize(14);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius(dp(16));
+        bg.setColor(selected ? Color.rgb(215, 246, 237) : Color.rgb(245, 247, 248));
+        bg.setStroke(1, selected ? Color.rgb(24, 129, 104) : Color.rgb(220, 228, 225));
+        button.setBackground(bg);
+        button.setTextColor(selected ? Color.rgb(7, 99, 76) : Color.rgb(42, 54, 58));
         return button;
     }
 
-    private boolean wantsVideo(PermissionRequest request) {
-        if (request == null || request.getResources() == null) {
-            return false;
+    private GradientDrawable bubbleBackground(boolean outbound) {
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(outbound ? Color.rgb(215, 246, 237) : Color.WHITE);
+        bg.setCornerRadius(dp(8));
+        bg.setStroke(1, outbound ? Color.rgb(168, 224, 207) : Color.rgb(224, 231, 228));
+        return bg;
+    }
+
+    private void sendLocalDraft() {
+        String draft = composerInput.getText().toString().trim();
+        if (draft.isEmpty()) {
+            return;
         }
-        for (String resource : request.getResources()) {
-            if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(resource)) {
-                return true;
+        if (selectedRoom == null || "setup".equals(selectedRoom.id)) {
+            Toast.makeText(this, "Log in before sending", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        String token = AppPrefs.accessToken(this).trim();
+        if (token.isEmpty()) {
+            Toast.makeText(this, "Missing Matrix access token", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        NativeRoom targetRoom = selectedRoom;
+        composerInput.setText("");
+        stopTypingNow();
+        setBusy("Sending through Matrix JS E2EE runtime...");
+        matrixRuntime.sendText(targetRoom.id, draft);
+    }
+
+    private void sendReaction(NativeMessage message, String key) {
+        if (selectedRoom == null || message.eventId.isEmpty()) {
+            return;
+        }
+        if (AppPrefs.accessToken(this).trim().isEmpty()) {
+            Toast.makeText(this, "Log in before reacting", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        matrixRuntime.sendReaction(selectedRoom.id, message.eventId, key);
+    }
+
+    private void handleComposerTyping(CharSequence value) {
+        if (matrixRuntime == null || selectedRoom == null || "setup".equals(selectedRoom.id)) {
+            return;
+        }
+        if (AppPrefs.accessToken(this).trim().isEmpty()) {
+            return;
+        }
+        typingHandler.removeCallbacks(stopTypingRunnable);
+        if (value == null || value.toString().trim().isEmpty()) {
+            stopTypingNow();
+            return;
+        }
+        long now = System.currentTimeMillis();
+        if (!selectedRoom.id.equals(activeTypingRoomId) || now - lastTypingSentAt > 1500) {
+            activeTypingRoomId = selectedRoom.id;
+            lastTypingSentAt = now;
+            matrixRuntime.sendTyping(selectedRoom.id, true);
+        }
+        typingHandler.postDelayed(stopTypingRunnable, 4000);
+    }
+
+    private void stopTypingNow() {
+        typingHandler.removeCallbacks(stopTypingRunnable);
+        if (matrixRuntime != null && !activeTypingRoomId.isEmpty()) {
+            matrixRuntime.sendTyping(activeTypingRoomId, false);
+        }
+        activeTypingRoomId = "";
+        lastTypingSentAt = 0L;
+    }
+
+    private View createPushPanel() {
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout body = panelBody();
+        body.addView(sectionTitle("Push status"));
+        pushStatus = text("", 14, Color.rgb(44, 52, 56), false);
+        body.addView(card(pushStatus));
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        Button start = actionButton("Start");
+        start.setOnClickListener((View v) -> {
+            AppPrefs.get(this).edit().putBoolean(AppPrefs.KEY_PUSH_ENABLED, true).apply();
+            refreshSettingsFields();
+            updatePushService();
+        });
+        Button stop = actionButton("Stop");
+        stop.setOnClickListener((View v) -> {
+            AppPrefs.get(this).edit().putBoolean(AppPrefs.KEY_PUSH_ENABLED, false).apply();
+            refreshSettingsFields();
+            updatePushService();
+        });
+        actions.addView(start, new LinearLayout.LayoutParams(0, dp(44), 1));
+        actions.addView(stop, new LinearLayout.LayoutParams(0, dp(44), 1));
+        body.addView(actions);
+
+        body.addView(sectionTitle("Wake contract"));
+        TextView contract = text("Publish ntfy messages to the configured topic. A Click header like matrixrich://open?url=https%3A%2F%2Fmatrix.to%2F%23%2F... wakes this native chat surface.", 14, Color.rgb(58, 68, 72), false);
+        contract.setPadding(dp(14), dp(12), dp(14), dp(12));
+        body.addView(card(contract));
+
+        scroll.addView(body);
+        return scroll;
+    }
+
+    private View createSettingsPanel() {
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout body = panelBody();
+
+        body.addView(sectionTitle("Matrix account"));
+        homeserverInput = input("Homeserver / Element Web URL", AppPrefs.homeserverUrl(this), InputType.TYPE_TEXT_VARIATION_URI);
+        accountHintInput = input("Login name", AppPrefs.accountHint(this), InputType.TYPE_CLASS_TEXT);
+        passwordInput = input("Password, not saved", "", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        userIdInput = input("User ID", AppPrefs.userId(this), InputType.TYPE_CLASS_TEXT);
+        deviceIdInput = input("Device ID", AppPrefs.deviceId(this), InputType.TYPE_CLASS_TEXT);
+        accessTokenInput = input("Access token", AppPrefs.accessToken(this), InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        recoveryKeyInput = input("Recovery key / security key", AppPrefs.recoveryKey(this), InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        connectionStatus = text(accountStatus(), 14, Color.rgb(44, 52, 56), false);
+        body.addView(card(homeserverInput));
+        body.addView(card(accountHintInput));
+        body.addView(card(passwordInput));
+
+        advancedAccountToggle = checkbox("Advanced token restore", hasAdvancedAccountValues());
+        advancedAccountToggle.setOnClickListener((View v) -> updateAdvancedAccountVisibility());
+        body.addView(card(advancedAccountToggle));
+
+        advancedAccountFields = new LinearLayout(this);
+        advancedAccountFields.setOrientation(LinearLayout.VERTICAL);
+        advancedAccountFields.addView(card(userIdInput));
+        advancedAccountFields.addView(card(deviceIdInput));
+        advancedAccountFields.addView(card(accessTokenInput));
+        advancedAccountFields.addView(card(recoveryKeyInput));
+        body.addView(advancedAccountFields);
+        updateAdvancedAccountVisibility();
+        body.addView(card(connectionStatus));
+
+        LinearLayout accountActions = new LinearLayout(this);
+        accountActions.setOrientation(LinearLayout.HORIZONTAL);
+        Button login = actionButton("Login");
+        login.setOnClickListener((View v) -> loginOrUseToken());
+        Button sync = actionButton("Sync");
+        sync.setOnClickListener((View v) -> {
+            saveSettings(false);
+            syncNow(true);
+        });
+        accountActions.addView(login, new LinearLayout.LayoutParams(0, dp(44), 1));
+        accountActions.addView(sync, new LinearLayout.LayoutParams(0, dp(44), 1));
+        body.addView(accountActions);
+
+        body.addView(sectionTitle("E2EE verification"));
+        verificationStatus = text(verificationStatusText(), 14, Color.rgb(44, 52, 56), false);
+        verificationStatus.setTextIsSelectable(true);
+        body.addView(card(verificationStatus));
+
+        verificationQrImage = new ImageView(this);
+        verificationQrImage.setAdjustViewBounds(true);
+        verificationQrImage.setPadding(dp(8), dp(8), dp(8), dp(8));
+        verificationQrCard = card(verificationQrImage);
+        verificationQrCard.setVisibility(View.GONE);
+        body.addView(verificationQrCard);
+
+        LinearLayout verificationActions = new LinearLayout(this);
+        verificationActions.setOrientation(LinearLayout.HORIZONTAL);
+        verificationStartButton = actionButton("Verify");
+        verificationStartButton.setOnClickListener((View v) -> startSessionVerification());
+        verificationAcceptButton = actionButton("Accept");
+        verificationAcceptButton.setOnClickListener((View v) -> matrixRuntime.acceptVerification());
+        verificationActions.addView(verificationStartButton, new LinearLayout.LayoutParams(0, dp(44), 1));
+        verificationActions.addView(verificationAcceptButton, new LinearLayout.LayoutParams(0, dp(44), 1));
+        body.addView(verificationActions);
+
+        LinearLayout methodActions = new LinearLayout(this);
+        methodActions.setOrientation(LinearLayout.HORIZONTAL);
+        verificationSasButton = actionButton("SAS");
+        verificationSasButton.setOnClickListener((View v) -> matrixRuntime.startSasVerification());
+        verificationQrButton = actionButton("Show QR");
+        verificationQrButton.setOnClickListener((View v) -> matrixRuntime.generateQrVerification());
+        verificationQrScanButton = actionButton("Scan QR");
+        verificationQrScanButton.setOnClickListener((View v) -> startVerificationQrScan());
+        methodActions.addView(verificationSasButton, new LinearLayout.LayoutParams(0, dp(44), 1));
+        methodActions.addView(verificationQrButton, new LinearLayout.LayoutParams(0, dp(44), 1));
+        methodActions.addView(verificationQrScanButton, new LinearLayout.LayoutParams(0, dp(44), 1));
+        body.addView(methodActions);
+
+        LinearLayout sasActions = new LinearLayout(this);
+        sasActions.setOrientation(LinearLayout.HORIZONTAL);
+        verificationMatchButton = actionButton("Match");
+        verificationMatchButton.setOnClickListener((View v) -> matrixRuntime.confirmSasVerification());
+        verificationMismatchButton = actionButton("Mismatch");
+        verificationMismatchButton.setOnClickListener((View v) -> matrixRuntime.mismatchSasVerification());
+        sasActions.addView(verificationMatchButton, new LinearLayout.LayoutParams(0, dp(44), 1));
+        sasActions.addView(verificationMismatchButton, new LinearLayout.LayoutParams(0, dp(44), 1));
+        body.addView(sasActions);
+
+        LinearLayout qrActions = new LinearLayout(this);
+        qrActions.setOrientation(LinearLayout.HORIZONTAL);
+        verificationQrConfirmButton = actionButton("QR OK");
+        verificationQrConfirmButton.setOnClickListener((View v) -> matrixRuntime.confirmQrVerification());
+        verificationCancelButton = actionButton("Cancel");
+        verificationCancelButton.setOnClickListener((View v) -> matrixRuntime.cancelVerification());
+        qrActions.addView(verificationQrConfirmButton, new LinearLayout.LayoutParams(0, dp(44), 1));
+        qrActions.addView(verificationCancelButton, new LinearLayout.LayoutParams(0, dp(44), 1));
+        body.addView(qrActions);
+        updateVerificationControls();
+
+        body.addView(sectionTitle("ntfy push"));
+        ntfyServerInput = input("ntfy server", AppPrefs.ntfyServer(this), InputType.TYPE_TEXT_VARIATION_URI);
+        ntfyTopicInput = input("ntfy topic", AppPrefs.ntfyTopic(this), InputType.TYPE_CLASS_TEXT);
+        ntfyTokenInput = input("ntfy bearer token", AppPrefs.ntfyToken(this), InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        pushEnabledInput = checkbox("Enable foreground listener", AppPrefs.pushEnabled(this));
+        body.addView(card(ntfyServerInput));
+        body.addView(card(ntfyTopicInput));
+        body.addView(card(ntfyTokenInput));
+        body.addView(card(pushEnabledInput));
+
+        Button save = actionButton("Save settings");
+        save.setOnClickListener((View v) -> saveSettings(true));
+        body.addView(save, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+
+        scroll.addView(body);
+        return scroll;
+    }
+
+    private LinearLayout panelBody() {
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        body.setPadding(dp(14), dp(14), dp(14), dp(18));
+        return body;
+    }
+
+    private View card(View child) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(10), dp(8), dp(10), dp(8));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(Color.WHITE);
+        bg.setCornerRadius(dp(8));
+        bg.setStroke(1, Color.rgb(224, 231, 228));
+        card.setBackground(bg);
+        card.addView(child, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.setMargins(0, 0, 0, dp(10));
+        card.setLayoutParams(params);
+        return card;
+    }
+
+    private TextView sectionTitle(String value) {
+        TextView view = text(value, 13, Color.rgb(79, 92, 96), true);
+        view.setPadding(dp(2), dp(10), dp(2), dp(8));
+        return view;
+    }
+
+    private TextView text(String value, int sp, int color, boolean bold) {
+        TextView view = new TextView(this);
+        view.setText(value);
+        view.setTextSize(sp);
+        view.setTextColor(color);
+        view.setLineSpacing(0, 1.08f);
+        if (bold) {
+            view.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        }
+        return view;
+    }
+
+    private EditText input(String hint, String value, int inputType) {
+        EditText editText = new EditText(this);
+        editText.setHint(hint);
+        editText.setText(value == null ? "" : value);
+        editText.setSingleLine(true);
+        editText.setInputType(inputType);
+        editText.setTextSize(14);
+        return editText;
+    }
+
+    private CheckBox checkbox(String text, boolean checked) {
+        CheckBox checkBox = new CheckBox(this);
+        checkBox.setText(text);
+        checkBox.setChecked(checked);
+        checkBox.setTextSize(14);
+        return checkBox;
+    }
+
+    private Button navButton(String label) {
+        Button button = new Button(this);
+        button.setText(label);
+        button.setAllCaps(false);
+        button.setTextSize(13);
+        return button;
+    }
+
+    private Button actionButton(String label) {
+        Button button = new Button(this);
+        button.setText(label);
+        button.setAllCaps(false);
+        button.setTextColor(Color.rgb(20, 103, 84));
+        button.setTextSize(13);
+        return button;
+    }
+
+    private void showTab(int tab) {
+        currentTab = tab;
+        chatPanel.setVisibility(tab == TAB_CHAT ? View.VISIBLE : View.GONE);
+        pushPanel.setVisibility(tab == TAB_PUSH ? View.VISIBLE : View.GONE);
+        settingsPanel.setVisibility(tab == TAB_SETTINGS ? View.VISIBLE : View.GONE);
+        tintNav(chatNav, tab == TAB_CHAT);
+        tintNav(pushNav, tab == TAB_PUSH);
+        tintNav(settingsNav, tab == TAB_SETTINGS);
+        if (tab == TAB_CHAT) {
+            renderSelectedRoom();
+        } else if (tab == TAB_PUSH) {
+            title.setText("Push");
+            subtitle.setText(AppPrefs.pushEnabled(this) ? "ntfy listener enabled" : "ntfy listener disabled");
+            updatePushStatus();
+        } else {
+            title.setText("Settings");
+            subtitle.setText("Matrix account and notification bridge");
+            refreshSettingsFields();
+        }
+    }
+
+    private void tintNav(Button button, boolean selected) {
+        GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius(dp(8));
+        bg.setColor(selected ? Color.rgb(218, 246, 237) : Color.TRANSPARENT);
+        button.setTextColor(selected ? Color.rgb(7, 99, 76) : Color.rgb(76, 88, 92));
+        button.setBackground(bg);
+    }
+
+    private void tintRoomButton(Button button, boolean selected) {
+        GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius(dp(18));
+        bg.setColor(selected ? Color.rgb(24, 129, 104) : Color.WHITE);
+        bg.setStroke(1, selected ? Color.rgb(24, 129, 104) : Color.rgb(220, 228, 225));
+        button.setTextColor(selected ? Color.WHITE : Color.rgb(42, 54, 58));
+        button.setBackground(bg);
+    }
+
+    private void handleIntent(Intent intent) {
+        if (intent == null) {
+            return;
+        }
+        String openUrl = intent.getStringExtra("open_url");
+        if (openUrl != null && !openUrl.isEmpty()) {
+            if (NtfyMessage.isClientDeepLink(openUrl)) {
+                handleIntent(new Intent(Intent.ACTION_VIEW, Uri.parse(openUrl)));
+                return;
             }
+            showTab(TAB_CHAT);
+            showWakeNotice(openUrl);
+            syncNow(false);
+            return;
         }
-        return false;
+        Uri data = intent.getData();
+        if (data == null) {
+            return;
+        }
+        if ("matrixrich".equals(data.getScheme())) {
+            showTab(TAB_CHAT);
+            String target = data.getQueryParameter("url");
+            showWakeNotice(target == null || target.isEmpty() ? data.toString() : target);
+            syncNow(false);
+            return;
+        }
+        if ("ntfy".equals(data.getScheme())) {
+            applyNtfyDeepLink(data);
+        }
     }
 
-    private int checkSelfPermissionCompat(String permission) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
-            return PackageManager.PERMISSION_GRANTED;
+    private void showWakeNotice(String value) {
+        if (wakeNotice == null) {
+            return;
         }
-        return checkSelfPermission(permission);
+        wakeNotice.setText("Wake target: " + value);
+        wakeNotice.setVisibility(View.VISIBLE);
     }
 
-    private boolean isDebuggable() {
-        return (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+    private void applyNtfyDeepLink(Uri uri) {
+        String host = uri.getHost();
+        String topic = uri.getLastPathSegment();
+        if (host == null || topic == null || topic.isEmpty()) {
+            Toast.makeText(this, "Open settings to configure ntfy", Toast.LENGTH_SHORT).show();
+            showTab(TAB_SETTINGS);
+            return;
+        }
+        AppPrefs.get(this).edit()
+                .putString(AppPrefs.KEY_NTFY_SERVER, "https://" + host)
+                .putString(AppPrefs.KEY_NTFY_TOPIC, topic)
+                .putBoolean(AppPrefs.KEY_PUSH_ENABLED, true)
+                .apply();
+        refreshSettingsFields();
+        updatePushService();
+        showTab(TAB_PUSH);
+        Toast.makeText(this, "ntfy topic saved", Toast.LENGTH_SHORT).show();
     }
 
-    private void requestNotificationPermission() {
-        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermissionCompat(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQUEST_NOTIFICATION_PERMISSION);
+    private void refreshSettingsFields() {
+        if (homeserverInput == null) {
+            return;
+        }
+        homeserverInput.setText(AppPrefs.homeserverUrl(this));
+        accountHintInput.setText(AppPrefs.accountHint(this));
+        passwordInput.setText("");
+        userIdInput.setText(AppPrefs.userId(this));
+        deviceIdInput.setText(AppPrefs.deviceId(this));
+        accessTokenInput.setText(AppPrefs.accessToken(this));
+        recoveryKeyInput.setText(AppPrefs.recoveryKey(this));
+        advancedAccountToggle.setChecked(hasAdvancedAccountValues());
+        updateAdvancedAccountVisibility();
+        ntfyServerInput.setText(AppPrefs.ntfyServer(this));
+        ntfyTopicInput.setText(AppPrefs.ntfyTopic(this));
+        ntfyTokenInput.setText(AppPrefs.ntfyToken(this));
+        pushEnabledInput.setChecked(AppPrefs.pushEnabled(this));
+        connectionStatus.setText(accountStatus());
+        updateVerificationControls();
+    }
+
+    private void saveSettings(boolean toast) {
+        SharedPreferences prefs = AppPrefs.get(this);
+        prefs.edit()
+                .putString(AppPrefs.KEY_HOMESERVER_URL, homeserverInput.getText().toString().trim())
+                .putString(AppPrefs.KEY_ACCOUNT_HINT, accountHintInput.getText().toString().trim())
+                .putString(AppPrefs.KEY_USER_ID, userIdInput.getText().toString().trim())
+                .putString(AppPrefs.KEY_DEVICE_ID, deviceIdInput.getText().toString().trim())
+                .putString(AppPrefs.KEY_ACCESS_TOKEN, accessTokenInput.getText().toString().trim())
+                .putString(AppPrefs.KEY_RECOVERY_KEY, recoveryKeyInput.getText().toString().trim())
+                .putString(AppPrefs.KEY_NTFY_SERVER, ntfyServerInput.getText().toString().trim())
+                .putString(AppPrefs.KEY_NTFY_TOPIC, ntfyTopicInput.getText().toString().trim())
+                .putString(AppPrefs.KEY_NTFY_TOKEN, ntfyTokenInput.getText().toString().trim())
+                .putBoolean(AppPrefs.KEY_PUSH_ENABLED, pushEnabledInput.isChecked())
+                .apply();
+        updatePushService();
+        showTab(TAB_CHAT);
+        if (toast) {
+            Toast.makeText(this, "Settings saved", Toast.LENGTH_SHORT).show();
         }
     }
 
-    private void status(String text) {
-        if (statusText != null) {
-            statusText.setText(text);
+    private void updatePushService() {
+        Intent intent = new Intent(this, NtfyPushService.class);
+        if (AppPrefs.pushEnabled(this) && !AppPrefs.ntfyTopic(this).trim().isEmpty()) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent);
+            } else {
+                startService(intent);
+            }
+        } else {
+            stopService(intent);
         }
+        updatePushStatus();
+    }
+
+    private void updatePushStatus() {
+        if (pushStatus == null) {
+            return;
+        }
+        String topic = AppPrefs.ntfyTopic(this).trim();
+        boolean enabled = AppPrefs.pushEnabled(this) && !topic.isEmpty();
+        pushStatus.setText(enabled
+                ? "Listening on " + NtfyEndpoint.jsonStreamUrl(AppPrefs.ntfyServer(this), topic)
+                : "Disabled. Configure an ntfy server and topic, then enable the foreground listener.");
+    }
+
+    private void requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQUEST_NOTIFICATIONS);
+        }
+    }
+
+    private void startVerificationQrScan() {
+        if (AppPrefs.accessToken(this).trim().isEmpty()) {
+            Toast.makeText(this, "Log in before verification", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (Build.VERSION.SDK_INT >= 23 && checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.CAMERA}, REQUEST_CAMERA);
+            return;
+        }
+        launchVerificationQrScanner();
+    }
+
+    private void launchVerificationQrScanner() {
+        Intent intent = new Intent(this, CaptureActivity.class);
+        intent.setAction(ZXING_SCAN_ACTION);
+        intent.putExtra(ZXING_SCAN_FORMATS, "QR_CODE");
+        intent.putExtra(ZXING_PROMPT_MESSAGE, "Scan Matrix verification QR");
+        intent.putExtra(ZXING_BEEP_ENABLED, false);
+        startActivityForResult(intent, REQUEST_VERIFICATION_QR_SCAN);
+    }
+
+    private void handleVerificationQrScan(int resultCode, Intent data) {
+        if (resultCode != RESULT_OK || data == null) {
+            Toast.makeText(this, "QR scan cancelled", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        byte[] rawBytes = data.getByteArrayExtra(ZXING_SCAN_RESULT_BYTES);
+        String contents = data.getStringExtra(ZXING_SCAN_RESULT);
+        if (rawBytes == null || rawBytes.length == 0) {
+            if (contents == null || contents.isEmpty()) {
+                Toast.makeText(this, "No QR payload returned", Toast.LENGTH_LONG).show();
+                return;
+            }
+            rawBytes = contents.getBytes(StandardCharsets.ISO_8859_1);
+        }
+        String qrCodeBase64 = Base64.encodeToString(rawBytes, Base64.NO_WRAP);
+        setBusy("Scanning verification QR...");
+        matrixRuntime.scanQrVerification(qrCodeBase64);
     }
 
     private int dp(int value) {
-        return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
+        return Math.round(value * getResources().getDisplayMetrics().density);
     }
+
+    private void loginOrUseToken() {
+        saveSettings(false);
+        String password = passwordInput.getText().toString();
+        String account = accountHintInput.getText().toString().trim();
+        String token = accessTokenInput.getText().toString().trim();
+        MatrixLoginFormState formState = new MatrixLoginFormState(
+                account,
+                password,
+                token,
+                userIdInput.getText().toString(),
+                deviceIdInput.getText().toString()
+        );
+        String error = formState.validationError();
+        if (error != null) {
+            Toast.makeText(this, error, Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (!formState.usesPasswordLogin()) {
+            syncNow(true);
+            return;
+        }
+        setBusy("Logging in through Matrix JS E2EE runtime...");
+        matrixRuntime.loginPassword(
+                homeserverInput.getText().toString(),
+                account,
+                password,
+                recoveryKeyInput.getText().toString()
+        );
+    }
+
+    private void updateAdvancedAccountVisibility() {
+        if (advancedAccountFields != null && advancedAccountToggle != null) {
+            advancedAccountFields.setVisibility(advancedAccountToggle.isChecked() ? View.VISIBLE : View.GONE);
+        }
+    }
+
+    private boolean hasAdvancedAccountValues() {
+        return !AppPrefs.userId(this).trim().isEmpty()
+                || !AppPrefs.deviceId(this).trim().isEmpty()
+                || !AppPrefs.accessToken(this).trim().isEmpty()
+                || !AppPrefs.recoveryKey(this).trim().isEmpty();
+    }
+
+    private void startSessionVerification() {
+        if (AppPrefs.accessToken(this).trim().isEmpty()) {
+            Toast.makeText(this, "Log in before verification", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        setBusy("Starting E2EE session verification...");
+        matrixRuntime.startOwnVerification();
+    }
+
+    private void updateVerificationControls() {
+        if (verificationStatus == null) {
+            return;
+        }
+        verificationStatus.setText(verificationStatusText());
+        boolean signedIn = !AppPrefs.accessToken(this).trim().isEmpty();
+        verificationStartButton.setEnabled(signedIn);
+        verificationAcceptButton.setEnabled(verificationState.canAccept);
+        verificationSasButton.setEnabled(verificationState.canStartSas);
+        verificationQrButton.setEnabled(verificationState.canShowQr);
+        verificationQrScanButton.setEnabled(verificationState.canScanQr);
+        verificationMatchButton.setEnabled(verificationState.canConfirmSas);
+        verificationMismatchButton.setEnabled(verificationState.canConfirmSas);
+        verificationQrConfirmButton.setEnabled(verificationState.canConfirmQr);
+        verificationCancelButton.setEnabled(verificationState.phaseCode > 0 && verificationState.phaseCode < 5);
+        renderVerificationQr();
+    }
+
+    private String verificationStatusText() {
+        StringBuilder builder = new StringBuilder(verificationState.summary());
+        if (!verificationState.qrCodeBase64.isEmpty()) {
+            builder.append("\nQR: scan this code from the other device.");
+        }
+        if (verificationState.canConfirmQr) {
+            builder.append("\nQR: confirm only after the other device says it scanned this code.");
+        }
+        if (!verificationState.sasDecimal.isEmpty()) {
+            builder.append("\nDecimal: ").append(verificationState.sasDecimal);
+        }
+        if (!verificationState.sasEmoji.isEmpty()) {
+            builder.append("\nEmoji:\n").append(verificationState.sasEmoji);
+        }
+        return builder.toString();
+    }
+
+    private void renderVerificationQr() {
+        if (verificationQrCard == null || verificationQrImage == null) {
+            return;
+        }
+        String qrCode = verificationState.qrCodeBase64;
+        if (qrCode.isEmpty()) {
+            renderedVerificationQrBase64 = "";
+            verificationQrImage.setImageDrawable(null);
+            verificationQrCard.setVisibility(View.GONE);
+            return;
+        }
+        verificationQrCard.setVisibility(View.VISIBLE);
+        if (qrCode.equals(renderedVerificationQrBase64)) {
+            return;
+        }
+        try {
+            verificationQrImage.setImageBitmap(qrBitmapFromBase64(qrCode, dp(248)));
+            renderedVerificationQrBase64 = qrCode;
+        } catch (Exception e) {
+            renderedVerificationQrBase64 = "";
+            verificationQrImage.setImageDrawable(null);
+            verificationQrCard.setVisibility(View.GONE);
+            Toast.makeText(this, "Could not render verification QR", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private Bitmap qrBitmapFromBase64(String base64, int size) throws WriterException {
+        byte[] bytes = Base64.decode(base64, Base64.DEFAULT);
+        String contents = new String(bytes, StandardCharsets.ISO_8859_1);
+        EnumMap<EncodeHintType, Object> hints = new EnumMap<>(EncodeHintType.class);
+        hints.put(EncodeHintType.CHARACTER_SET, "ISO-8859-1");
+        BitMatrix matrix = new QRCodeWriter().encode(contents, BarcodeFormat.QR_CODE, size, size, hints);
+        Bitmap bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+        for (int y = 0; y < size; y++) {
+            for (int x = 0; x < size; x++) {
+                bitmap.setPixel(x, y, matrix.get(x, y) ? Color.BLACK : Color.WHITE);
+            }
+        }
+        return bitmap;
+    }
+
+    private void syncNow(boolean userInitiated) {
+        String token = AppPrefs.accessToken(this).trim();
+        if (token.isEmpty()) {
+            if (userInitiated) {
+                Toast.makeText(this, "Log in first", Toast.LENGTH_SHORT).show();
+            }
+            setDisconnectedState("Open Settings to log in.");
+            renderRooms();
+            renderSelectedRoom();
+            return;
+        }
+        String userId = AppPrefs.userId(this).trim();
+        String deviceId = AppPrefs.deviceId(this).trim();
+        if (userId.isEmpty() || deviceId.isEmpty()) {
+            if (userInitiated) {
+                Toast.makeText(this, "User ID and device ID are required for the E2EE runtime", Toast.LENGTH_LONG).show();
+            }
+            return;
+        }
+        setBusy("Syncing through Matrix JS E2EE runtime...");
+        matrixRuntime.startSession(
+                AppPrefs.homeserverUrl(this),
+                userId,
+                deviceId,
+                token,
+                AppPrefs.recoveryKey(this)
+        );
+    }
+
+    private HeadlessMatrixRuntime.Listener createRuntimeListener() {
+        return new HeadlessMatrixRuntime.Listener() {
+            @Override
+            public void onRuntimeReady() {
+                if (connectionStatus != null) {
+                    connectionStatus.setText(accountStatus());
+                }
+            }
+
+            @Override
+            public void onRuntimeStatus(String status) {
+                if (connectionStatus != null && status != null && !status.isEmpty()) {
+                    connectionStatus.setText(status);
+                }
+            }
+
+            @Override
+            public void onLoginResult(MatrixLoginResult login) {
+                AppPrefs.get(MainActivity.this).edit()
+                        .putString(AppPrefs.KEY_ACCESS_TOKEN, login.accessToken)
+                        .putString(AppPrefs.KEY_USER_ID, login.userId)
+                        .putString(AppPrefs.KEY_DEVICE_ID, login.deviceId)
+                        .putString(AppPrefs.KEY_SYNC_TOKEN, "")
+                        .apply();
+                if (accessTokenInput != null) {
+                    accessTokenInput.setText(login.accessToken);
+                    userIdInput.setText(login.userId);
+                    deviceIdInput.setText(login.deviceId);
+                    passwordInput.setText("");
+                    connectionStatus.setText(accountStatus());
+                }
+                setBusy("Starting encrypted sync...");
+            }
+
+            @Override
+            public void onSyncSnapshot(MatrixSyncResult result) {
+                applyRuntimeSnapshot(result);
+                clearBusy();
+            }
+
+            @Override
+            public void onVerificationUpdate(MatrixVerificationState state) {
+                verificationState = state;
+                clearBusy();
+                updateVerificationControls();
+                if (connectionStatus != null) {
+                    connectionStatus.setText(state.summary());
+                }
+            }
+
+            @Override
+            public void onSendComplete(String roomId, String body) {
+                addLocalMessage(roomId, new NativeMessage("You", "now", body, true));
+                clearBusy();
+            }
+
+            @Override
+            public void onRuntimeError(String message) {
+                clearBusy();
+                String value = message == null || message.isEmpty() ? "Matrix runtime error" : message;
+                Toast.makeText(MainActivity.this, value, Toast.LENGTH_LONG).show();
+                if (connectionStatus != null) {
+                    connectionStatus.setText(value);
+                }
+            }
+        };
+    }
+
+    private void applyRuntimeSnapshot(MatrixSyncResult result) {
+        String previousRoomId = selectedRoom == null ? "" : selectedRoom.id;
+        rooms.clear();
+        messagesByRoom.clear();
+        for (NativeRoom room : result.rooms) {
+            rooms.add(room);
+            messagesByRoom.put(room.id, new ArrayList<>(result.messagesFor(room.id)));
+        }
+        selectedRoom = null;
+        for (NativeRoom room : rooms) {
+            if (room.id.equals(previousRoomId)) {
+                selectedRoom = room;
+                break;
+            }
+        }
+        if (selectedRoom == null && !rooms.isEmpty()) {
+            selectedRoom = rooms.get(0);
+        }
+        if (rooms.isEmpty()) {
+            setDisconnectedState("Connected, but no joined rooms were returned by the Matrix JS runtime.");
+        }
+        renderRooms();
+        renderSelectedRoom();
+        if (connectionStatus != null) {
+            connectionStatus.setText(accountStatus());
+        }
+    }
+
+    private void addLocalMessage(String roomId, NativeMessage message) {
+        List<NativeMessage> existing = messagesByRoom.get(roomId);
+        if (existing == null) {
+            existing = new ArrayList<>();
+            messagesByRoom.put(roomId, existing);
+        }
+        existing.add(message);
+        renderSelectedRoom();
+    }
+
+    private void setDisconnectedState(String message) {
+        rooms.clear();
+        messagesByRoom.clear();
+        NativeRoom setup = new NativeRoom("setup", "Not connected", message, "M", 0);
+        rooms.add(setup);
+        List<NativeMessage> setupMessages = new ArrayList<>();
+        setupMessages.add(new NativeMessage("Matrix Rich", "", message, false));
+        messagesByRoom.put(setup.id, setupMessages);
+        selectedRoom = setup;
+    }
+
+    private String accountStatus() {
+        String userId = AppPrefs.userId(this);
+        String token = AppPrefs.accessToken(this);
+        if (!userId.trim().isEmpty()) {
+            return "Signed in as " + userId;
+        }
+        if (!token.trim().isEmpty()) {
+            return "Access token saved";
+        }
+        return "Not signed in";
+    }
+
+    private void setBusy(String value) {
+        if (wakeNotice != null) {
+            wakeNotice.setText(value);
+            wakeNotice.setVisibility(View.VISIBLE);
+        }
+    }
+
+    private void clearBusy() {
+        if (wakeNotice != null) {
+            wakeNotice.setVisibility(View.GONE);
+        }
+    }
+
 }
