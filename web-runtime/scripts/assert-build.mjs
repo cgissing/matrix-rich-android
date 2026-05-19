@@ -12,6 +12,8 @@ for (const marker of [
   "MatrixRichRuntime",
   "sendTextMessage",
   "loadSessionBackupPrivateKeyFromSecretStorage",
+  "requestOwnUserVerification",
+  "VerifierEvent",
 ]) {
   if (!bundle.includes(marker)) {
     throw new Error(`Missing runtime marker: ${marker}`);

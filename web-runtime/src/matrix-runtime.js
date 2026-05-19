@@ -1,4 +1,6 @@
 import * as sdk from "matrix-js-sdk";
+import { CryptoEvent, VerificationPhase, VerificationRequestEvent, VerifierEvent } from "matrix-js-sdk/lib/crypto-api/index.js";
+import { VerificationMethod } from "matrix-js-sdk/lib/types.js";
 import { decodeRecoveryKey } from "matrix-js-sdk/lib/crypto-api/recovery-key.js";
 
 const nativeInstantiateStreaming = WebAssembly.instantiateStreaming?.bind(WebAssembly);
@@ -19,6 +21,11 @@ let store = null;
 let sessionKey = "";
 let recoveryKey = "";
 let starting = null;
+let currentVerificationRequest = null;
+let currentVerificationSource = "";
+let currentVerifier = null;
+let currentSas = null;
+const runningVerifiers = new WeakSet();
 
 function post(type, payload = {}, message = "") {
   const target = globalThis.AndroidMatrixRuntime;
@@ -35,6 +42,10 @@ function status(message) {
 function fail(error) {
   const message = error && error.message ? error.message : String(error);
   post("error", {}, message);
+}
+
+export function phaseName(phase) {
+  return VerificationPhase[phase] || "Unknown";
 }
 
 export function normalizeHomeserver(value) {
@@ -117,6 +128,47 @@ export async function resolveHomeserver(value) {
     input,
     baseUrl: input,
     source: "direct",
+  };
+}
+
+export function sasPayloadFromCallbacks(callbacks) {
+  const sas = callbacks?.sas || {};
+  const decimal = Array.isArray(sas.decimal) ? sas.decimal.join(" ") : "";
+  const emoji = Array.isArray(sas.emoji)
+    ? sas.emoji.map((entry) => `${entry?.[0] || ""} ${entry?.[1] || ""}`.trim()).filter(Boolean).join("\n")
+    : "";
+  return {
+    sasDecimal: decimal,
+    sasEmoji: emoji,
+    canConfirmSas: true,
+  };
+}
+
+export function verificationPayloadFromRequest(request, source, extra = {}) {
+  const phaseCode = Number(request?.phase || 0);
+  const canAccept = phaseCode <= VerificationPhase.Requested
+    && !request?.accepting
+    && !request?.declining;
+  return {
+    transactionId: request?.transactionId || "",
+    roomId: request?.roomId || "",
+    initiatedByMe: !!request?.initiatedByMe,
+    otherUserId: request?.otherUserId || "",
+    otherDeviceId: request?.otherDeviceId || "",
+    isSelfVerification: !!request?.isSelfVerification,
+    phaseCode,
+    phase: phaseName(phaseCode),
+    pending: !!request?.pending,
+    accepting: !!request?.accepting,
+    declining: !!request?.declining,
+    timeout: request?.timeout || 0,
+    methods: Array.isArray(request?.methods) ? request.methods : [],
+    chosenMethod: request?.chosenMethod || "",
+    source: source || "",
+    canAccept,
+    canStartSas: phaseCode === VerificationPhase.Ready || (phaseCode === VerificationPhase.Started && !!request?.verifier),
+    canConfirmSas: false,
+    ...extra,
   };
 }
 
@@ -203,6 +255,77 @@ function emitSnapshot() {
   post("snapshot", snapshotPayload());
 }
 
+function emitVerification(extra = {}, message = "") {
+  if (!currentVerificationRequest) {
+    post("verification", {
+      phaseCode: 0,
+      phase: "None",
+      source: "",
+      canAccept: false,
+      canStartSas: false,
+      canConfirmSas: false,
+      ...extra,
+    }, message);
+    return;
+  }
+  post("verification", verificationPayloadFromRequest(currentVerificationRequest, currentVerificationSource, extra), message);
+}
+
+function attachVerifier(verifier) {
+  if (!verifier || currentVerifier === verifier) {
+    return;
+  }
+  currentVerifier = verifier;
+  verifier.on(VerifierEvent.ShowSas, (callbacks) => {
+    currentSas = callbacks;
+    emitVerification(sasPayloadFromCallbacks(callbacks), "Compare the SAS on both devices");
+  });
+  verifier.on(VerifierEvent.Cancel, (error) => {
+    currentSas = null;
+    const message = error?.message || "Verification cancelled";
+    emitVerification({ canConfirmSas: false }, message);
+  });
+  const callbacks = verifier.getShowSasCallbacks?.();
+  if (callbacks) {
+    currentSas = callbacks;
+    emitVerification(sasPayloadFromCallbacks(callbacks), "Compare the SAS on both devices");
+  }
+}
+
+function runVerifier(verifier) {
+  if (!verifier || runningVerifiers.has(verifier)) {
+    return;
+  }
+  runningVerifiers.add(verifier);
+  attachVerifier(verifier);
+  verifier.verify()
+    .then(() => {
+      currentSas = null;
+      emitVerification({ canConfirmSas: false }, "Verification complete");
+    })
+    .catch((error) => {
+      currentSas = null;
+      const message = error?.message || "Verification cancelled";
+      emitVerification({ canConfirmSas: false }, message);
+    });
+}
+
+function trackVerificationRequest(request, source) {
+  currentVerificationRequest = request;
+  currentVerificationSource = source || "";
+  currentSas = null;
+  request.on(VerificationRequestEvent.Change, () => {
+    if (request.verifier) {
+      attachVerifier(request.verifier);
+    }
+    emitVerification();
+  });
+  if (request.verifier) {
+    attachVerifier(request.verifier);
+  }
+  emitVerification({}, "Verification request ready");
+}
+
 function installListeners() {
   client.on(sdk.ClientEvent.Sync, (state, _previous, data) => {
     status(`Sync ${state}`);
@@ -214,6 +337,9 @@ function installListeners() {
   });
   client.on(sdk.RoomEvent.Timeline, () => emitSnapshot());
   client.on(sdk.MatrixEventEvent.Decrypted, () => emitSnapshot());
+  client.on(CryptoEvent.VerificationRequestReceived, (request) => {
+    trackVerificationRequest(request, "incoming");
+  });
 }
 
 async function stopClient() {
@@ -227,6 +353,10 @@ async function stopClient() {
   }
   client = null;
   store = null;
+  currentVerificationRequest = null;
+  currentVerificationSource = "";
+  currentVerifier = null;
+  currentSas = null;
 }
 
 async function createCryptoCallbacks() {
@@ -350,6 +480,66 @@ async function loginPassword(payload) {
   });
 }
 
+async function startOwnVerification() {
+  if (!client) {
+    throw new Error("Matrix runtime is not signed in.");
+  }
+  const crypto = client.getCrypto?.();
+  if (!crypto?.requestOwnUserVerification) {
+    throw new Error("Matrix crypto verification is not available.");
+  }
+  const request = await crypto.requestOwnUserVerification();
+  trackVerificationRequest(request, "outgoing");
+}
+
+async function acceptVerification() {
+  if (!currentVerificationRequest) {
+    throw new Error("No active verification request.");
+  }
+  await currentVerificationRequest.accept();
+  emitVerification({}, "Verification accepted");
+}
+
+async function startSasVerification() {
+  if (!currentVerificationRequest) {
+    throw new Error("No active verification request.");
+  }
+  const verifier = currentVerificationRequest.verifier
+    || await currentVerificationRequest.startVerification(VerificationMethod.Sas);
+  runVerifier(verifier);
+  emitVerification({}, "SAS verification started");
+}
+
+async function confirmSasVerification() {
+  if (!currentSas) {
+    throw new Error("No SAS is waiting for confirmation.");
+  }
+  await currentSas.confirm();
+  currentSas = null;
+  emitVerification({ canConfirmSas: false }, "SAS confirmed");
+}
+
+function mismatchSasVerification() {
+  if (!currentSas) {
+    throw new Error("No SAS is waiting for confirmation.");
+  }
+  currentSas.mismatch();
+  currentSas = null;
+  emitVerification({ canConfirmSas: false }, "SAS mismatch sent");
+}
+
+async function cancelVerification() {
+  if (currentSas) {
+    currentSas.cancel();
+  } else if (currentVerifier) {
+    currentVerifier.cancel(new Error("User cancelled verification"));
+  } else if (currentVerificationRequest) {
+    await currentVerificationRequest.cancel();
+  }
+  currentSas = null;
+  emitVerification({ canConfirmSas: false }, "Verification cancelled");
+}
+
 async function sendText(payload) {
   if (!client) {
     throw new Error("Matrix runtime is not signed in.");
@@ -369,6 +559,18 @@ async function dispatch(rawCommand) {
       await loginPassword(payload);
     } else if (command.op === "startSession") {
       await startSession(payload);
+    } else if (command.op === "startOwnVerification") {
+      await startOwnVerification();
+    } else if (command.op === "acceptVerification") {
+      await acceptVerification();
+    } else if (command.op === "startSasVerification") {
+      await startSasVerification();
+    } else if (command.op === "confirmSasVerification") {
+      await confirmSasVerification();
+    } else if (command.op === "mismatchSasVerification") {
+      mismatchSasVerification();
+    } else if (command.op === "cancelVerification") {
+      await cancelVerification();
     } else if (command.op === "snapshot") {
       emitSnapshot();
     } else if (command.op === "sendText") {

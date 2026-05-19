@@ -20,6 +20,23 @@ public final class MatrixRuntimeMapper {
         );
     }
 
+    public static MatrixVerificationState verificationFromPayload(JSONObject payload) {
+        return new MatrixVerificationState(
+                payload.optString("transactionId"),
+                payload.optString("otherUserId"),
+                payload.optString("otherDeviceId"),
+                payload.optBoolean("isSelfVerification", false),
+                payload.optInt("phaseCode", 0),
+                payload.optString("phase", "None"),
+                payload.optString("source"),
+                payload.optBoolean("canAccept", false),
+                payload.optBoolean("canStartSas", false),
+                payload.optBoolean("canConfirmSas", false),
+                payload.optString("sasDecimal"),
+                payload.optString("sasEmoji")
+        );
+    }
+
     public static MatrixSyncResult syncFromSnapshot(JSONObject payload) {
         List<NativeRoom> rooms = new ArrayList<>();
         Map<String, List<NativeMessage>> messagesByRoom = new HashMap<>();

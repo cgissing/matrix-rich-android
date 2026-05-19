@@ -34,6 +34,8 @@ public final class HeadlessMatrixRuntime {
 
         void onSyncSnapshot(MatrixSyncResult result);
 
+        void onVerificationUpdate(MatrixVerificationState state);
+
         void onSendComplete(String roomId, String body);
 
         void onRuntimeError(String message);
@@ -129,6 +131,30 @@ public final class HeadlessMatrixRuntime {
         dispatch("sendText", payload);
     }
 
+    public void startOwnVerification() {
+        dispatch("startOwnVerification", new JSONObject());
+    }
+
+    public void acceptVerification() {
+        dispatch("acceptVerification", new JSONObject());
+    }
+
+    public void startSasVerification() {
+        dispatch("startSasVerification", new JSONObject());
+    }
+
+    public void confirmSasVerification() {
+        dispatch("confirmSasVerification", new JSONObject());
+    }
+
+    public void mismatchSasVerification() {
+        dispatch("mismatchSasVerification", new JSONObject());
+    }
+
+    public void cancelVerification() {
+        dispatch("cancelVerification", new JSONObject());
+    }
+
     private void dispatch(String op, JSONObject payload) {
         JSONObject envelope = put(put(new JSONObject(), "op", op), "payload", payload);
         String command = envelope.toString();
@@ -192,6 +218,8 @@ public final class HeadlessMatrixRuntime {
                     listener.onLoginResult(MatrixRuntimeMapper.loginFromPayload(payload));
                 } else if ("snapshot".equals(type) && payload != null) {
                     listener.onSyncSnapshot(MatrixRuntimeMapper.syncFromSnapshot(payload));
+                } else if ("verification".equals(type) && payload != null) {
+                    listener.onVerificationUpdate(MatrixRuntimeMapper.verificationFromPayload(payload));
                 } else if ("send".equals(type) && payload != null) {
                     listener.onSendComplete(payload.optString("roomId"), payload.optString("body"));
                 } else if ("error".equals(type)) {

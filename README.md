@@ -13,6 +13,7 @@ The main chat surface is native Android UI. It does not embed Element Web as the
 - A hidden local WebView runs a bundled Matrix JS SDK runtime for Matrix sync/send and Rust/WASM E2EE. This runtime is not a visible chat UI.
 - Matrix JS SDK snapshots populate the native room rail and timeline.
 - Sending goes through Matrix JS SDK so encrypted rooms are sent through the E2EE stack instead of the raw REST fallback.
+- E2EE session verification can be started from Settings. The native UI exposes the Matrix JS SDK SAS flow: request or accept verification, start SAS, compare the displayed values, then mark match or mismatch.
 - Message bodies render through Markwon with table and LaTeX plugins.
 - Inline `$...$` formulas are accepted and normalized for the native LaTeX renderer.
 - `$$...$$` display formulas are preserved.
@@ -40,6 +41,8 @@ Markwon table/formula renderer
 ```
 
 The Android UI stays native. The runtime initializes `matrix-js-sdk` Rust crypto through WASM, uses IndexedDB for Matrix and crypto stores, and can use a Matrix recovery/security key to unlock server-side key backup. Without a recovery key, newly logged-in devices may only decrypt messages for which they receive keys after this device starts.
+
+The Settings screen also exposes SAS-based E2EE verification for the current session. QR-code verification is not wired into the native UI yet.
 
 ## ntfy Setup
 

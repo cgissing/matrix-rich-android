@@ -69,6 +69,14 @@ public class MainActivity extends Activity {
     private CheckBox advancedAccountToggle;
     private LinearLayout advancedAccountFields;
     private TextView connectionStatus;
+    private TextView verificationStatus;
+    private Button verificationStartButton;
+    private Button verificationAcceptButton;
+    private Button verificationSasButton;
+    private Button verificationMatchButton;
+    private Button verificationMismatchButton;
+    private Button verificationCancelButton;
+    private MatrixVerificationState verificationState = MatrixVerificationState.empty();
     private HeadlessMatrixRuntime matrixRuntime;
 
     @Override
@@ -395,6 +403,38 @@ public class MainActivity extends Activity {
         accountActions.addView(sync, new LinearLayout.LayoutParams(0, dp(44), 1));
         body.addView(accountActions);
 
+        body.addView(sectionTitle("E2EE verification"));
+        verificationStatus = text(verificationStatusText(), 14, Color.rgb(44, 52, 56), false);
+        verificationStatus.setTextIsSelectable(true);
+        body.addView(card(verificationStatus));
+
+        LinearLayout verificationActions = new LinearLayout(this);
+        verificationActions.setOrientation(LinearLayout.HORIZONTAL);
+        verificationStartButton = actionButton("Verify");
+        verificationStartButton.setOnClickListener((View v) -> startSessionVerification());
+        verificationAcceptButton = actionButton("Accept");
+        verificationAcceptButton.setOnClickListener((View v) -> matrixRuntime.acceptVerification());
+        verificationSasButton = actionButton("SAS");
+        verificationSasButton.setOnClickListener((View v) -> matrixRuntime.startSasVerification());
+        verificationActions.addView(verificationStartButton, new LinearLayout.LayoutParams(0, dp(44), 1));
+        verificationActions.addView(verificationAcceptButton, new LinearLayout.LayoutParams(0, dp(44), 1));
+        verificationActions.addView(verificationSasButton, new LinearLayout.LayoutParams(0, dp(44), 1));
+        body.addView(verificationActions);
+
+        LinearLayout sasActions = new LinearLayout(this);
+        sasActions.setOrientation(LinearLayout.HORIZONTAL);
+        verificationMatchButton = actionButton("Match");
+        verificationMatchButton.setOnClickListener((View v) -> matrixRuntime.confirmSasVerification());
+        verificationMismatchButton = actionButton("Mismatch");
+        verificationMismatchButton.setOnClickListener((View v) -> matrixRuntime.mismatchSasVerification());
+        verificationCancelButton = actionButton("Cancel");
+        verificationCancelButton.setOnClickListener((View v) -> matrixRuntime.cancelVerification());
+        sasActions.addView(verificationMatchButton, new LinearLayout.LayoutParams(0, dp(44), 1));
+        sasActions.addView(verificationMismatchButton, new LinearLayout.LayoutParams(0, dp(44), 1));
+        sasActions.addView(verificationCancelButton, new LinearLayout.LayoutParams(0, dp(44), 1));
+        body.addView(sasActions);
+        updateVerificationControls();
+
         body.addView(sectionTitle("ntfy push"));
         ntfyServerInput = input("ntfy server", AppPrefs.ntfyServer(this), InputType.TYPE_TEXT_VARIATION_URI);
         ntfyTopicInput = input("ntfy topic", AppPrefs.ntfyTopic(this), InputType.TYPE_CLASS_TEXT);
@@ -603,6 +643,7 @@ public class MainActivity extends Activity {
         ntfyTokenInput.setText(AppPrefs.ntfyToken(this));
         pushEnabledInput.setChecked(AppPrefs.pushEnabled(this));
         connectionStatus.setText(accountStatus());
+        updateVerificationControls();
     }
 
     private void saveSettings(boolean toast) {
@@ -704,6 +745,40 @@ public class MainActivity extends Activity {
                 || !AppPrefs.recoveryKey(this).trim().isEmpty();
     }
 
+    private void startSessionVerification() {
+        if (AppPrefs.accessToken(this).trim().isEmpty()) {
+            Toast.makeText(this, "Log in before verification", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        setBusy("Starting E2EE session verification...");
+        matrixRuntime.startOwnVerification();
+    }
+
+    private void updateVerificationControls() {
+        if (verificationStatus == null) {
+            return;
+        }
+        verificationStatus.setText(verificationStatusText());
+        boolean signedIn = !AppPrefs.accessToken(this).trim().isEmpty();
+        verificationStartButton.setEnabled(signedIn);
+        verificationAcceptButton.setEnabled(verificationState.canAccept);
+        verificationSasButton.setEnabled(verificationState.canStartSas);
+        verificationMatchButton.setEnabled(verificationState.canConfirmSas);
+        verificationMismatchButton.setEnabled(verificationState.canConfirmSas);
+        verificationCancelButton.setEnabled(verificationState.phaseCode > 0 && verificationState.phaseCode < 5);
+    }
+
+    private String verificationStatusText() {
+        StringBuilder builder = new StringBuilder(verificationState.summary());
+        if (!verificationState.sasDecimal.isEmpty()) {
+            builder.append("\nDecimal: ").append(verificationState.sasDecimal);
+        }
+        if (!verificationState.sasEmoji.isEmpty()) {
+            builder.append("\nEmoji:\n").append(verificationState.sasEmoji);
+        }
+        return builder.toString();
+    }
+
     private void syncNow(boolean userInitiated) {
         String token = AppPrefs.accessToken(this).trim();
         if (token.isEmpty()) {
@@ -771,6 +846,16 @@ public class MainActivity extends Activity {
             public void onSyncSnapshot(MatrixSyncResult result) {
                 applyRuntimeSnapshot(result);
                 clearBusy();
+            }
+
+            @Override
+            public void onVerificationUpdate(MatrixVerificationState state) {
+                verificationState = state;
+                clearBusy();
+                updateVerificationControls();
+                if (connectionStatus != null) {
+                    connectionStatus.setText(state.summary());
+                }
             }
 
             @Override
