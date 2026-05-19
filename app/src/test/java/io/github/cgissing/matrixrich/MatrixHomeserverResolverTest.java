@@ -12,22 +12,22 @@ public class MatrixHomeserverResolverTest {
     public void resolvesElementWebDeploymentPathThroughConfigJson() {
         List<String> calls = new ArrayList<>();
         MatrixHomeserverResolver.Resolved resolved = MatrixHomeserverResolver.resolve(
-                "https://hermes.314605.xyz/_h314/",
+                "https://element.example.org/_h314/",
                 url -> {
                     calls.add(url);
-                    assertEquals("https://hermes.314605.xyz/_h314/config.json", url);
+                    assertEquals("https://element.example.org/_h314/config.json", url);
                     return "{"
                             + "\"default_server_config\":{"
                             + "\"m.homeserver\":{"
-                            + "\"base_url\":\"https://hermes.314605.xyz\""
+                            + "\"base_url\":\"https://matrix.example.org\""
                             + "}"
                             + "}"
                             + "}";
                 }
         );
 
-        assertEquals("https://hermes.314605.xyz/_h314", resolved.input);
-        assertEquals("https://hermes.314605.xyz", resolved.baseUrl);
+        assertEquals("https://element.example.org/_h314", resolved.input);
+        assertEquals("https://matrix.example.org", resolved.baseUrl);
         assertEquals("element-web-config", resolved.source);
         assertEquals(1, calls.size());
     }

@@ -8,13 +8,13 @@ test("resolves an Element Web deployment path through config.json", async () => 
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {
     calls.push(String(url));
-    assert.equal(String(url), "https://hermes.314605.xyz/_h314/config.json");
+    assert.equal(String(url), "https://element.example.org/_h314/config.json");
     return {
       ok: true,
       json: async () => ({
         default_server_config: {
           "m.homeserver": {
-            base_url: "https://hermes.314605.xyz",
+            base_url: "https://matrix.example.org",
           },
         },
       }),
@@ -22,11 +22,11 @@ test("resolves an Element Web deployment path through config.json", async () => 
   };
 
   try {
-    const resolved = await resolveHomeserver("https://hermes.314605.xyz/_h314/");
+    const resolved = await resolveHomeserver("https://element.example.org/_h314/");
 
-    assert.equal(resolved.baseUrl, "https://hermes.314605.xyz");
+    assert.equal(resolved.baseUrl, "https://matrix.example.org");
     assert.equal(resolved.source, "element-web-config");
-    assert.deepEqual(calls, ["https://hermes.314605.xyz/_h314/config.json"]);
+    assert.deepEqual(calls, ["https://element.example.org/_h314/config.json"]);
   } finally {
     globalThis.fetch = originalFetch;
   }
