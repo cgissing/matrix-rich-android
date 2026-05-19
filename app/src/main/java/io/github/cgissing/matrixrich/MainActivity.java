@@ -58,13 +58,16 @@ public class MainActivity extends Activity {
     private EditText homeserverInput;
     private EditText accountHintInput;
     private EditText userIdInput;
+    private EditText deviceIdInput;
     private EditText passwordInput;
     private EditText accessTokenInput;
+    private EditText recoveryKeyInput;
     private EditText ntfyServerInput;
     private EditText ntfyTopicInput;
     private EditText ntfyTokenInput;
     private CheckBox pushEnabledInput;
     private TextView connectionStatus;
+    private HeadlessMatrixRuntime matrixRuntime;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -113,7 +116,17 @@ public class MainActivity extends Activity {
         root.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
 
         root.addView(createBottomNavigation(), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        matrixRuntime = new HeadlessMatrixRuntime(this, createRuntimeListener());
+        matrixRuntime.attach(root);
         setContentView(root);
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (matrixRuntime != null) {
+            matrixRuntime.destroy();
+        }
+        super.onDestroy();
     }
 
     private View createAppBar() {
@@ -298,16 +311,8 @@ public class MainActivity extends Activity {
         }
         NativeRoom targetRoom = selectedRoom;
         composerInput.setText("");
-        setBusy("Sending...");
-        runMatrixTask(() -> {
-            String txnId = "mra" + System.currentTimeMillis();
-            new MatrixApiClient(AppPrefs.homeserverUrl(this)).sendTextMessage(token, targetRoom.id, draft, txnId);
-            runOnUiThread(() -> {
-                addLocalMessage(targetRoom.id, new NativeMessage("You", "now", draft, true));
-                clearBusy();
-                syncNow(false);
-            });
-        });
+        setBusy("Sending through Matrix JS E2EE runtime...");
+        matrixRuntime.sendText(targetRoom.id, draft);
     }
 
     private View createPushPanel() {
@@ -353,13 +358,17 @@ public class MainActivity extends Activity {
         accountHintInput = input("Login name", AppPrefs.accountHint(this), InputType.TYPE_CLASS_TEXT);
         passwordInput = input("Password, not saved", "", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         userIdInput = input("User ID", AppPrefs.userId(this), InputType.TYPE_CLASS_TEXT);
+        deviceIdInput = input("Device ID", AppPrefs.deviceId(this), InputType.TYPE_CLASS_TEXT);
         accessTokenInput = input("Access token", AppPrefs.accessToken(this), InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        recoveryKeyInput = input("Recovery key / security key", AppPrefs.recoveryKey(this), InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         connectionStatus = text(accountStatus(), 14, Color.rgb(44, 52, 56), false);
         body.addView(card(homeserverInput));
         body.addView(card(accountHintInput));
         body.addView(card(passwordInput));
         body.addView(card(userIdInput));
+        body.addView(card(deviceIdInput));
         body.addView(card(accessTokenInput));
+        body.addView(card(recoveryKeyInput));
         body.addView(card(connectionStatus));
 
         LinearLayout accountActions = new LinearLayout(this);
@@ -573,7 +582,9 @@ public class MainActivity extends Activity {
         accountHintInput.setText(AppPrefs.accountHint(this));
         passwordInput.setText("");
         userIdInput.setText(AppPrefs.userId(this));
+        deviceIdInput.setText(AppPrefs.deviceId(this));
         accessTokenInput.setText(AppPrefs.accessToken(this));
+        recoveryKeyInput.setText(AppPrefs.recoveryKey(this));
         ntfyServerInput.setText(AppPrefs.ntfyServer(this));
         ntfyTopicInput.setText(AppPrefs.ntfyTopic(this));
         ntfyTokenInput.setText(AppPrefs.ntfyToken(this));
@@ -587,7 +598,9 @@ public class MainActivity extends Activity {
                 .putString(AppPrefs.KEY_HOMESERVER_URL, homeserverInput.getText().toString().trim())
                 .putString(AppPrefs.KEY_ACCOUNT_HINT, accountHintInput.getText().toString().trim())
                 .putString(AppPrefs.KEY_USER_ID, userIdInput.getText().toString().trim())
+                .putString(AppPrefs.KEY_DEVICE_ID, deviceIdInput.getText().toString().trim())
                 .putString(AppPrefs.KEY_ACCESS_TOKEN, accessTokenInput.getText().toString().trim())
+                .putString(AppPrefs.KEY_RECOVERY_KEY, recoveryKeyInput.getText().toString().trim())
                 .putString(AppPrefs.KEY_NTFY_SERVER, ntfyServerInput.getText().toString().trim())
                 .putString(AppPrefs.KEY_NTFY_TOPIC, ntfyTopicInput.getText().toString().trim())
                 .putString(AppPrefs.KEY_NTFY_TOKEN, ntfyTokenInput.getText().toString().trim())
@@ -645,6 +658,10 @@ public class MainActivity extends Activity {
                 Toast.makeText(this, "Enter a password or access token", Toast.LENGTH_SHORT).show();
                 return;
             }
+            if (userIdInput.getText().toString().trim().isEmpty() || deviceIdInput.getText().toString().trim().isEmpty()) {
+                Toast.makeText(this, "Access-token sign-in needs user ID and device ID for E2EE", Toast.LENGTH_LONG).show();
+                return;
+            }
             syncNow(true);
             return;
         }
@@ -652,24 +669,13 @@ public class MainActivity extends Activity {
             Toast.makeText(this, "Enter a login name", Toast.LENGTH_SHORT).show();
             return;
         }
-        setBusy("Logging in...");
-        runMatrixTask(() -> {
-            MatrixLoginResult login = new MatrixApiClient(homeserverInput.getText().toString()).loginPassword(account, password);
-            AppPrefs.get(this).edit()
-                    .putString(AppPrefs.KEY_ACCESS_TOKEN, login.accessToken)
-                    .putString(AppPrefs.KEY_USER_ID, login.userId)
-                    .putString(AppPrefs.KEY_DEVICE_ID, login.deviceId)
-                    .putString(AppPrefs.KEY_SYNC_TOKEN, "")
-                    .apply();
-            runOnUiThread(() -> {
-                accessTokenInput.setText(login.accessToken);
-                userIdInput.setText(login.userId);
-                passwordInput.setText("");
-                connectionStatus.setText(accountStatus());
-                clearBusy();
-                syncNow(true);
-            });
-        });
+        setBusy("Logging in through Matrix JS E2EE runtime...");
+        matrixRuntime.loginPassword(
+                homeserverInput.getText().toString(),
+                account,
+                password,
+                recoveryKeyInput.getText().toString()
+        );
     }
 
     private void syncNow(boolean userInitiated) {
@@ -683,65 +689,108 @@ public class MainActivity extends Activity {
             renderSelectedRoom();
             return;
         }
-        setBusy("Syncing...");
-        runMatrixTask(() -> {
-            MatrixSyncResult result = new MatrixApiClient(AppPrefs.homeserverUrl(this))
-                    .sync(token, AppPrefs.syncToken(this), 0, AppPrefs.userId(this));
-            if (!result.nextBatch.isEmpty()) {
-                AppPrefs.get(this).edit().putString(AppPrefs.KEY_SYNC_TOKEN, result.nextBatch).apply();
+        String userId = AppPrefs.userId(this).trim();
+        String deviceId = AppPrefs.deviceId(this).trim();
+        if (userId.isEmpty() || deviceId.isEmpty()) {
+            if (userInitiated) {
+                Toast.makeText(this, "User ID and device ID are required for the E2EE runtime", Toast.LENGTH_LONG).show();
             }
-            runOnUiThread(() -> {
-                applySyncResult(result);
-                clearBusy();
-            });
-        });
+            return;
+        }
+        setBusy("Syncing through Matrix JS E2EE runtime...");
+        matrixRuntime.startSession(
+                AppPrefs.homeserverUrl(this),
+                userId,
+                deviceId,
+                token,
+                AppPrefs.recoveryKey(this)
+        );
+        matrixRuntime.requestSnapshot();
     }
 
-    private void applySyncResult(MatrixSyncResult result) {
-        if (result.rooms.isEmpty() && rooms.size() == 1 && "setup".equals(rooms.get(0).id)) {
-            setDisconnectedState("Connected, but no joined rooms were returned by sync.");
-        } else {
-            for (NativeRoom room : result.rooms) {
-                upsertRoom(room);
-                mergeMessages(room.id, result.messagesFor(room.id));
+    private HeadlessMatrixRuntime.Listener createRuntimeListener() {
+        return new HeadlessMatrixRuntime.Listener() {
+            @Override
+            public void onRuntimeReady() {
+                if (connectionStatus != null) {
+                    connectionStatus.setText(accountStatus());
+                }
             }
-            if ((selectedRoom == null || "setup".equals(selectedRoom.id)) && !rooms.isEmpty()) {
-                selectedRoom = rooms.get(0);
+
+            @Override
+            public void onRuntimeStatus(String status) {
+                if (connectionStatus != null && status != null && !status.isEmpty()) {
+                    connectionStatus.setText(status);
+                }
             }
+
+            @Override
+            public void onLoginResult(MatrixLoginResult login) {
+                AppPrefs.get(MainActivity.this).edit()
+                        .putString(AppPrefs.KEY_ACCESS_TOKEN, login.accessToken)
+                        .putString(AppPrefs.KEY_USER_ID, login.userId)
+                        .putString(AppPrefs.KEY_DEVICE_ID, login.deviceId)
+                        .putString(AppPrefs.KEY_SYNC_TOKEN, "")
+                        .apply();
+                if (accessTokenInput != null) {
+                    accessTokenInput.setText(login.accessToken);
+                    userIdInput.setText(login.userId);
+                    deviceIdInput.setText(login.deviceId);
+                    passwordInput.setText("");
+                    connectionStatus.setText(accountStatus());
+                }
+                setBusy("Starting encrypted sync...");
+            }
+
+            @Override
+            public void onSyncSnapshot(MatrixSyncResult result) {
+                applyRuntimeSnapshot(result);
+                clearBusy();
+            }
+
+            @Override
+            public void onSendComplete(String roomId, String body) {
+                addLocalMessage(roomId, new NativeMessage("You", "now", body, true));
+                clearBusy();
+            }
+
+            @Override
+            public void onRuntimeError(String message) {
+                clearBusy();
+                String value = message == null || message.isEmpty() ? "Matrix runtime error" : message;
+                Toast.makeText(MainActivity.this, value, Toast.LENGTH_LONG).show();
+                if (connectionStatus != null) {
+                    connectionStatus.setText(value);
+                }
+            }
+        };
+    }
+
+    private void applyRuntimeSnapshot(MatrixSyncResult result) {
+        String previousRoomId = selectedRoom == null ? "" : selectedRoom.id;
+        rooms.clear();
+        messagesByRoom.clear();
+        for (NativeRoom room : result.rooms) {
+            rooms.add(room);
+            messagesByRoom.put(room.id, new ArrayList<>(result.messagesFor(room.id)));
+        }
+        selectedRoom = null;
+        for (NativeRoom room : rooms) {
+            if (room.id.equals(previousRoomId)) {
+                selectedRoom = room;
+                break;
+            }
+        }
+        if (selectedRoom == null && !rooms.isEmpty()) {
+            selectedRoom = rooms.get(0);
+        }
+        if (rooms.isEmpty()) {
+            setDisconnectedState("Connected, but no joined rooms were returned by the Matrix JS runtime.");
         }
         renderRooms();
         renderSelectedRoom();
         if (connectionStatus != null) {
             connectionStatus.setText(accountStatus());
-        }
-    }
-
-    private void upsertRoom(NativeRoom room) {
-        for (int i = 0; i < rooms.size(); i++) {
-            if (rooms.get(i).id.equals(room.id)) {
-                rooms.set(i, room);
-                return;
-            }
-        }
-        if (rooms.size() == 1 && "setup".equals(rooms.get(0).id)) {
-            rooms.clear();
-            messagesByRoom.clear();
-        }
-        rooms.add(room);
-    }
-
-    private void mergeMessages(String roomId, List<NativeMessage> incoming) {
-        if (incoming == null || incoming.isEmpty()) {
-            return;
-        }
-        List<NativeMessage> existing = messagesByRoom.get(roomId);
-        if (existing == null) {
-            existing = new ArrayList<>();
-            messagesByRoom.put(roomId, existing);
-        }
-        existing.addAll(incoming);
-        while (existing.size() > 80) {
-            existing.remove(0);
         }
     }
 
@@ -791,23 +840,4 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void runMatrixTask(MatrixTask task) {
-        new Thread(() -> {
-            try {
-                task.run();
-            } catch (Exception e) {
-                runOnUiThread(() -> {
-                    clearBusy();
-                    Toast.makeText(this, e.getMessage(), Toast.LENGTH_LONG).show();
-                    if (connectionStatus != null) {
-                        connectionStatus.setText(e.getMessage());
-                    }
-                });
-            }
-        }, "matrix-api").start();
-    }
-
-    private interface MatrixTask {
-        void run() throws Exception;
-    }
 }

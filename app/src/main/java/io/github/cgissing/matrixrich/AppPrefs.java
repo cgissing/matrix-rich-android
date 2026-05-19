@@ -10,6 +10,7 @@ final class AppPrefs {
     static final String KEY_USER_ID = "user_id";
     static final String KEY_ACCESS_TOKEN = "access_token";
     static final String KEY_DEVICE_ID = "device_id";
+    static final String KEY_RECOVERY_KEY = "recovery_key";
     static final String KEY_SYNC_TOKEN = "sync_token";
     static final String KEY_PUSH_ENABLED = "push_enabled";
     static final String KEY_NTFY_SERVER = "ntfy_server";
@@ -44,6 +45,10 @@ final class AppPrefs {
 
     static String deviceId(Context context) {
         return get(context).getString(KEY_DEVICE_ID, "");
+    }
+
+    static String recoveryKey(Context context) {
+        return get(context).getString(KEY_RECOVERY_KEY, "");
     }
 
     static String syncToken(Context context) {

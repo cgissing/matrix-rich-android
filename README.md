@@ -8,8 +8,9 @@ The main chat surface is native Android UI. It does not embed Element Web as the
 
 - Native top app bar, room rail, message timeline, composer, push tab, and settings tab.
 - Password login and access-token login against a Matrix homeserver.
-- Matrix `/sync` populates the native room rail and timeline.
-- Sending uses `/_matrix/client/v3/rooms/{roomId}/send/m.room.message/{txnId}`.
+- A hidden local WebView runs a bundled Matrix JS SDK runtime for Matrix sync/send and Rust/WASM E2EE. This runtime is not a visible chat UI.
+- Matrix JS SDK snapshots populate the native room rail and timeline.
+- Sending goes through Matrix JS SDK so encrypted rooms are sent through the E2EE stack instead of the raw REST fallback.
 - Message bodies render through Markwon with table and LaTeX plugins.
 - Inline `$...$` formulas are accepted and normalized for the native LaTeX renderer.
 - `$$...$$` display formulas are preserved.
@@ -18,16 +19,16 @@ The main chat surface is native Android UI. It does not embed Element Web as the
 
 ## What Changed From The First Attempt
 
-The first build exposed Element Web directly inside the main Chats tab. That is not the intended product shape. The visible WebView path has been removed from `MainActivity`; the app now renders a native Android chat layout.
+The first build exposed Element Web directly inside the main Chats tab. That is not the intended product shape. The visible chat surface is now a native Android layout; the only WebView is a hidden Matrix JS runtime with no Element Web UI loaded into it.
 
-Element Web remains useful as a reference for E2EE behavior and rendering expectations, but it is not the Android main UI.
+Element Web remains useful as a reference for E2EE behavior and rendering expectations, but it is not the Android main UI. The app now uses the web-side Matrix JS SDK idea as a hidden runtime, while the visible chat surface stays native.
 
 ## Matrix Engine Status
 
-This repository currently uses the Matrix Client-Server API directly for password login, token login, `/sync`, and sending text messages. The intended boundary remains:
+This repository now uses a bundled browser-side Matrix runtime for Matrix state and E2EE, while keeping the Android UI native. The intended boundary is:
 
 ```text
-Matrix runtime
+Hidden Matrix JS SDK + Rust crypto WASM runtime
         |
         v
 Native room list + native timeline + native composer
@@ -36,7 +37,7 @@ Native room list + native timeline + native composer
 Markwon table/formula renderer
 ```
 
-The Android UI stays native. End-to-end encrypted rooms are detected as encrypted events and shown as encrypted placeholders until an E2EE runtime is added.
+The Android UI stays native. The runtime initializes `matrix-js-sdk` Rust crypto through WASM, uses IndexedDB for Matrix and crypto stores, and can use a Matrix recovery/security key to unlock server-side key backup. Without a recovery key, newly logged-in devices may only decrypt messages for which they receive keys after this device starts.
 
 ## ntfy Setup
 
@@ -66,7 +67,7 @@ For Matrix notifications, your homeserver, bot, or gateway still needs to publis
 ## Privacy Notes
 
 - Do not commit ntfy bearer tokens, homeserver access tokens, Matrix recovery keys, signing keys, or generated APK signing material.
-- The debug app stores Matrix access tokens in Android `SharedPreferences`; release hardening should move secrets to encrypted storage.
+- The debug app stores Matrix access tokens and optional recovery keys in Android `SharedPreferences`; release hardening should move secrets to encrypted storage.
 - GitHub Actions builds an unsigned debug APK artifact.
 - Release signing should use GitHub Actions secrets later, not files committed to the repository.
 
@@ -83,5 +84,9 @@ The artifact name is `matrix-rich-debug-apk`.
 Local build, when Android SDK and Java are installed:
 
 ```bash
+cd web-runtime
+npm ci
+npm run check
+cd ..
 gradle testDebugUnitTest assembleDebug
 ```

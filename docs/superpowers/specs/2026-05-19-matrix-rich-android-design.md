@@ -2,7 +2,7 @@
 
 ## Product Boundary
 
-The Android main chat UI is native. It must not show Element Web or any other desktop web Matrix client as the visible room timeline. Element Web can remain a reference for Matrix/E2EE behavior, but it is not the product UI.
+The Android main chat UI is native. It must not show Element Web or any other desktop web Matrix client as the visible room timeline. Browser-side Matrix code can be used as a hidden runtime for protocol and E2EE behavior, but it must only emit data for the native UI to render.
 
 ## Native Chat Surface
 
@@ -18,9 +18,9 @@ The ntfy foreground service remains independent from the Matrix engine. It liste
 
 ## Matrix Runtime
 
-The app uses the Matrix Client-Server API behind the native UI. It supports password login, saved access-token login, `/sync`, native room summaries, native timeline messages, and text-message sending from the composer.
+The app uses a hidden local WebView to run a bundled Matrix JS SDK runtime. That runtime owns Matrix login, sync, Rust/WASM E2EE, key backup unlock, and message sending. It emits compact JSON snapshots to Android, and Android maps those snapshots into native room summaries and native timeline messages.
 
-Encrypted events are currently surfaced as encrypted placeholders. A full E2EE runtime should replace that placeholder path without changing the native UI boundary.
+The WebView is not visible, does not load Element Web, and does not render any chat timeline. It exists because the web-side Matrix stack already has the E2EE behavior the user verified in the browser, while the Android-visible UI needs to be rebuilt natively.
 
 ## Non-Goals
 
