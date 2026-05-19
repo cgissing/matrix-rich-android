@@ -143,6 +143,18 @@ public final class HeadlessMatrixRuntime {
         dispatch("startSasVerification", new JSONObject());
     }
 
+    public void generateQrVerification() {
+        dispatch("generateQrVerification", new JSONObject());
+    }
+
+    public void scanQrVerification(String qrCodeBase64) {
+        dispatch("scanQrVerification", put(new JSONObject(), "qrCodeBase64", qrCodeBase64));
+    }
+
+    public void confirmQrVerification() {
+        dispatch("confirmQrVerification", new JSONObject());
+    }
+
     public void confirmSasVerification() {
         dispatch("confirmSasVerification", new JSONObject());
     }

@@ -11,8 +11,12 @@ public final class MatrixVerificationState {
     public final boolean canAccept;
     public final boolean canStartSas;
     public final boolean canConfirmSas;
+    public final boolean canShowQr;
+    public final boolean canScanQr;
+    public final boolean canConfirmQr;
     public final String sasDecimal;
     public final String sasEmoji;
+    public final String qrCodeBase64;
 
     public MatrixVerificationState(
             String transactionId,
@@ -25,8 +29,12 @@ public final class MatrixVerificationState {
             boolean canAccept,
             boolean canStartSas,
             boolean canConfirmSas,
+            boolean canShowQr,
+            boolean canScanQr,
+            boolean canConfirmQr,
             String sasDecimal,
-            String sasEmoji
+            String sasEmoji,
+            String qrCodeBase64
     ) {
         this.transactionId = clean(transactionId);
         this.otherUserId = clean(otherUserId);
@@ -38,12 +46,16 @@ public final class MatrixVerificationState {
         this.canAccept = canAccept;
         this.canStartSas = canStartSas;
         this.canConfirmSas = canConfirmSas;
+        this.canShowQr = canShowQr;
+        this.canScanQr = canScanQr;
+        this.canConfirmQr = canConfirmQr;
         this.sasDecimal = clean(sasDecimal);
         this.sasEmoji = clean(sasEmoji);
+        this.qrCodeBase64 = clean(qrCodeBase64);
     }
 
     public static MatrixVerificationState empty() {
-        return new MatrixVerificationState("", "", "", false, 0, "None", "", false, false, false, "", "");
+        return new MatrixVerificationState("", "", "", false, 0, "None", "", false, false, false, false, false, false, "", "", "");
     }
 
     public String summary() {

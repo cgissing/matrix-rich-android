@@ -19,8 +19,12 @@ public class MatrixVerificationStateTest {
                 .put("source", "incoming")
                 .put("canStartSas", false)
                 .put("canConfirmSas", true)
+                .put("canShowQr", true)
+                .put("canScanQr", true)
+                .put("canConfirmQr", true)
                 .put("sasDecimal", "123 456 789")
-                .put("sasEmoji", "A Alpha\nB Bravo");
+                .put("sasEmoji", "A Alpha\nB Bravo")
+                .put("qrCodeBase64", "TUFUUklY");
 
         MatrixVerificationState state = MatrixRuntimeMapper.verificationFromPayload(payload);
 
@@ -31,8 +35,12 @@ public class MatrixVerificationStateTest {
         assertEquals("Started", state.phase);
         assertEquals("incoming", state.source);
         assertTrue(state.canConfirmSas);
+        assertTrue(state.canShowQr);
+        assertTrue(state.canScanQr);
+        assertTrue(state.canConfirmQr);
         assertEquals("123 456 789", state.sasDecimal);
         assertEquals("A Alpha\nB Bravo", state.sasEmoji);
+        assertEquals("TUFUUklY", state.qrCodeBase64);
     }
 
     @Test

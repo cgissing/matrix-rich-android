@@ -13,6 +13,9 @@ for (const marker of [
   "sendTextMessage",
   "loadSessionBackupPrivateKeyFromSecretStorage",
   "requestOwnUserVerification",
+  "generateQRCode",
+  "scanQRCode",
+  "ShowReciprocateQr",
   "VerifierEvent",
 ]) {
   if (!bundle.includes(marker)) {

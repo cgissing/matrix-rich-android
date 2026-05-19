@@ -32,8 +32,12 @@ public final class MatrixRuntimeMapper {
                 payload.optBoolean("canAccept", false),
                 payload.optBoolean("canStartSas", false),
                 payload.optBoolean("canConfirmSas", false),
+                payload.optBoolean("canShowQr", false),
+                payload.optBoolean("canScanQr", false),
+                payload.optBoolean("canConfirmQr", false),
                 payload.optString("sasDecimal"),
-                payload.optString("sasEmoji")
+                payload.optString("sasEmoji"),
+                payload.optString("qrCodeBase64")
         );
     }
 

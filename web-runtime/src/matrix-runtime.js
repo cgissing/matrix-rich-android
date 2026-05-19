@@ -25,6 +25,8 @@ let currentVerificationRequest = null;
 let currentVerificationSource = "";
 let currentVerifier = null;
 let currentSas = null;
+let currentQrCodeBase64 = "";
+let currentQrReciprocate = null;
 const runningVerifiers = new WeakSet();
 
 function post(type, payload = {}, message = "") {
@@ -144,6 +146,69 @@ export function sasPayloadFromCallbacks(callbacks) {
   };
 }
 
+export function bytesToBase64(bytes) {
+  if (!bytes || !bytes.length) {
+    return "";
+  }
+  if (typeof Buffer !== "undefined") {
+    return Buffer.from(bytes).toString("base64");
+  }
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    const chunk = bytes.subarray(offset, offset + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
+export function base64ToBytes(value) {
+  const base64 = String(value || "");
+  if (!base64) {
+    return new Uint8ClampedArray();
+  }
+  if (typeof Buffer !== "undefined") {
+    return new Uint8ClampedArray(Buffer.from(base64, "base64"));
+  }
+  const binary = atob(base64);
+  const bytes = new Uint8ClampedArray(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+function requestMethods(request) {
+  try {
+    const methods = request?.methods;
+    return Array.isArray(methods) ? methods : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function requestSupportsMethod(request, method) {
+  try {
+    return !!request?.otherPartySupportsMethod?.(method);
+  } catch (_) {
+    return false;
+  }
+}
+
+export function canShowQrFromRequest(request) {
+  const phaseCode = Number(request?.phase || 0);
+  return phaseCode === VerificationPhase.Ready
+    && typeof request?.generateQRCode === "function"
+    && requestSupportsMethod(request, VerificationMethod.ScanQrCode);
+}
+
+export function canScanQrFromRequest(request) {
+  const phaseCode = Number(request?.phase || 0);
+  return phaseCode === VerificationPhase.Ready
+    && typeof request?.scanQRCode === "function"
+    && requestSupportsMethod(request, VerificationMethod.ShowQrCode);
+}
+
 export function verificationPayloadFromRequest(request, source, extra = {}) {
   const phaseCode = Number(request?.phase || 0);
   const canAccept = phaseCode <= VerificationPhase.Requested
@@ -162,12 +227,16 @@ export function verificationPayloadFromRequest(request, source, extra = {}) {
     accepting: !!request?.accepting,
     declining: !!request?.declining,
     timeout: request?.timeout || 0,
-    methods: Array.isArray(request?.methods) ? request.methods : [],
+    methods: requestMethods(request),
     chosenMethod: request?.chosenMethod || "",
     source: source || "",
     canAccept,
     canStartSas: phaseCode === VerificationPhase.Ready || (phaseCode === VerificationPhase.Started && !!request?.verifier),
     canConfirmSas: false,
+    canShowQr: canShowQrFromRequest(request),
+    canScanQr: canScanQrFromRequest(request),
+    canConfirmQr: false,
+    qrCodeBase64: "",
     ...extra,
   };
 }
@@ -264,11 +333,18 @@ function emitVerification(extra = {}, message = "") {
       canAccept: false,
       canStartSas: false,
       canConfirmSas: false,
+      canShowQr: false,
+      canScanQr: false,
+      canConfirmQr: false,
+      qrCodeBase64: "",
       ...extra,
     }, message);
     return;
   }
-  post("verification", verificationPayloadFromRequest(currentVerificationRequest, currentVerificationSource, extra), message);
+  post("verification", verificationPayloadFromRequest(currentVerificationRequest, currentVerificationSource, {
+    qrCodeBase64: currentQrCodeBase64,
+    ...extra,
+  }), message);
 }
 
 function attachVerifier(verifier) {
@@ -282,13 +358,24 @@ function attachVerifier(verifier) {
   });
   verifier.on(VerifierEvent.Cancel, (error) => {
     currentSas = null;
+    currentQrReciprocate = null;
+    currentQrCodeBase64 = "";
     const message = error?.message || "Verification cancelled";
-    emitVerification({ canConfirmSas: false }, message);
+    emitVerification({ canConfirmSas: false, canConfirmQr: false, qrCodeBase64: "" }, message);
+  });
+  verifier.on(VerifierEvent.ShowReciprocateQr, (callbacks) => {
+    currentQrReciprocate = callbacks;
+    emitVerification({ canConfirmQr: true }, "Confirm the other device scanned this QR code");
   });
   const callbacks = verifier.getShowSasCallbacks?.();
   if (callbacks) {
     currentSas = callbacks;
     emitVerification(sasPayloadFromCallbacks(callbacks), "Compare the SAS on both devices");
+  }
+  const qrCallbacks = verifier.getReciprocateQrCodeCallbacks?.();
+  if (qrCallbacks) {
+    currentQrReciprocate = qrCallbacks;
+    emitVerification({ canConfirmQr: true }, "Confirm the other device scanned this QR code");
   }
 }
 
@@ -301,12 +388,16 @@ function runVerifier(verifier) {
   verifier.verify()
     .then(() => {
       currentSas = null;
-      emitVerification({ canConfirmSas: false }, "Verification complete");
+      currentQrReciprocate = null;
+      currentQrCodeBase64 = "";
+      emitVerification({ canConfirmSas: false, canConfirmQr: false, qrCodeBase64: "" }, "Verification complete");
     })
     .catch((error) => {
       currentSas = null;
+      currentQrReciprocate = null;
+      currentQrCodeBase64 = "";
       const message = error?.message || "Verification cancelled";
-      emitVerification({ canConfirmSas: false }, message);
+      emitVerification({ canConfirmSas: false, canConfirmQr: false, qrCodeBase64: "" }, message);
     });
 }
 
@@ -314,14 +405,22 @@ function trackVerificationRequest(request, source) {
   currentVerificationRequest = request;
   currentVerificationSource = source || "";
   currentSas = null;
+  currentQrCodeBase64 = "";
+  currentQrReciprocate = null;
   request.on(VerificationRequestEvent.Change, () => {
     if (request.verifier) {
       attachVerifier(request.verifier);
+      if (request.chosenMethod === VerificationMethod.Reciprocate) {
+        runVerifier(request.verifier);
+      }
     }
     emitVerification();
   });
   if (request.verifier) {
     attachVerifier(request.verifier);
+    if (request.chosenMethod === VerificationMethod.Reciprocate) {
+      runVerifier(request.verifier);
+    }
   }
   emitVerification({}, "Verification request ready");
 }
@@ -357,6 +456,8 @@ async function stopClient() {
   currentVerificationSource = "";
   currentVerifier = null;
   currentSas = null;
+  currentQrCodeBase64 = "";
+  currentQrReciprocate = null;
 }
 
 async function createCryptoCallbacks() {
@@ -510,6 +611,45 @@ async function startSasVerification() {
   emitVerification({}, "SAS verification started");
 }
 
+async function generateQrVerification() {
+  if (!currentVerificationRequest) {
+    throw new Error("No active verification request.");
+  }
+  const bytes = await currentVerificationRequest.generateQRCode();
+  if (!bytes || !bytes.length) {
+    throw new Error("QR code verification is not available for the other device.");
+  }
+  currentQrCodeBase64 = bytesToBase64(bytes);
+  emitVerification({
+    qrCodeBase64: currentQrCodeBase64,
+    canShowQr: false,
+  }, "Show this QR code on the other device");
+}
+
+async function scanQrVerification(payload) {
+  if (!currentVerificationRequest) {
+    throw new Error("No active verification request.");
+  }
+  const bytes = base64ToBytes(payload.qrCodeBase64);
+  if (!bytes.length) {
+    throw new Error("No QR code payload was scanned.");
+  }
+  const verifier = await currentVerificationRequest.scanQRCode(bytes);
+  currentQrCodeBase64 = "";
+  runVerifier(verifier);
+  emitVerification({ qrCodeBase64: "", canConfirmQr: false }, "QR code scanned");
+}
+
+async function confirmQrVerification() {
+  if (!currentQrReciprocate) {
+    throw new Error("No QR scan is waiting for confirmation.");
+  }
+  await currentQrReciprocate.confirm();
+  currentQrReciprocate = null;
+  currentQrCodeBase64 = "";
+  emitVerification({ canConfirmQr: false, qrCodeBase64: "" }, "QR scan confirmed");
+}
+
 async function confirmSasVerification() {
   if (!currentSas) {
     throw new Error("No SAS is waiting for confirmation.");
@@ -531,13 +671,17 @@ function mismatchSasVerification() {
 async function cancelVerification() {
   if (currentSas) {
     currentSas.cancel();
+  } else if (currentQrReciprocate) {
+    currentQrReciprocate.cancel();
   } else if (currentVerifier) {
     currentVerifier.cancel(new Error("User cancelled verification"));
   } else if (currentVerificationRequest) {
     await currentVerificationRequest.cancel();
   }
   currentSas = null;
-  emitVerification({ canConfirmSas: false }, "Verification cancelled");
+  currentQrReciprocate = null;
+  currentQrCodeBase64 = "";
+  emitVerification({ canConfirmSas: false, canConfirmQr: false, qrCodeBase64: "" }, "Verification cancelled");
 }
 
 async function sendText(payload) {
@@ -565,6 +709,12 @@ async function dispatch(rawCommand) {
       await acceptVerification();
     } else if (command.op === "startSasVerification") {
       await startSasVerification();
+    } else if (command.op === "generateQrVerification") {
+      await generateQrVerification();
+    } else if (command.op === "scanQrVerification") {
+      await scanQrVerification(payload);
+    } else if (command.op === "confirmQrVerification") {
+      await confirmQrVerification();
     } else if (command.op === "confirmSasVerification") {
       await confirmSasVerification();
     } else if (command.op === "mismatchSasVerification") {

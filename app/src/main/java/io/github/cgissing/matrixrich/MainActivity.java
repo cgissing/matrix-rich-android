@@ -5,6 +5,7 @@ import android.app.Activity;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -12,6 +13,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.text.InputType;
+import android.util.Base64;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -20,18 +22,30 @@ import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.google.zxing.BarcodeFormat;
+import com.google.zxing.EncodeHintType;
+import com.google.zxing.WriterException;
+import com.google.zxing.common.BitMatrix;
+import com.google.zxing.qrcode.QRCodeWriter;
+import com.google.zxing.integration.android.IntentIntegrator;
+import com.google.zxing.integration.android.IntentResult;
+
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 public class MainActivity extends Activity {
     private static final int REQUEST_NOTIFICATIONS = 1002;
+    private static final int REQUEST_CAMERA = 1003;
     private static final int TAB_CHAT = 0;
     private static final int TAB_PUSH = 1;
     private static final int TAB_SETTINGS = 2;
@@ -73,9 +87,15 @@ public class MainActivity extends Activity {
     private Button verificationStartButton;
     private Button verificationAcceptButton;
     private Button verificationSasButton;
+    private Button verificationQrButton;
+    private Button verificationQrScanButton;
     private Button verificationMatchButton;
     private Button verificationMismatchButton;
+    private Button verificationQrConfirmButton;
     private Button verificationCancelButton;
+    private ImageView verificationQrImage;
+    private View verificationQrCard;
+    private String renderedVerificationQrBase64 = "";
     private MatrixVerificationState verificationState = MatrixVerificationState.empty();
     private HeadlessMatrixRuntime matrixRuntime;
 
@@ -98,6 +118,26 @@ public class MainActivity extends Activity {
         super.onNewIntent(intent);
         setIntent(intent);
         handleIntent(intent);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        IntentResult scanResult = IntentIntegrator.parseActivityResult(requestCode, resultCode, data);
+        if (scanResult != null) {
+            handleVerificationQrScan(scanResult);
+            return;
+        }
+        super.onActivityResult(requestCode, resultCode, data);
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_CAMERA
+                && grantResults.length > 0
+                && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            launchVerificationQrScanner();
+        }
     }
 
     @Override
@@ -408,18 +448,35 @@ public class MainActivity extends Activity {
         verificationStatus.setTextIsSelectable(true);
         body.addView(card(verificationStatus));
 
+        verificationQrImage = new ImageView(this);
+        verificationQrImage.setAdjustViewBounds(true);
+        verificationQrImage.setPadding(dp(8), dp(8), dp(8), dp(8));
+        verificationQrCard = card(verificationQrImage);
+        verificationQrCard.setVisibility(View.GONE);
+        body.addView(verificationQrCard);
+
         LinearLayout verificationActions = new LinearLayout(this);
         verificationActions.setOrientation(LinearLayout.HORIZONTAL);
         verificationStartButton = actionButton("Verify");
         verificationStartButton.setOnClickListener((View v) -> startSessionVerification());
         verificationAcceptButton = actionButton("Accept");
         verificationAcceptButton.setOnClickListener((View v) -> matrixRuntime.acceptVerification());
-        verificationSasButton = actionButton("SAS");
-        verificationSasButton.setOnClickListener((View v) -> matrixRuntime.startSasVerification());
         verificationActions.addView(verificationStartButton, new LinearLayout.LayoutParams(0, dp(44), 1));
         verificationActions.addView(verificationAcceptButton, new LinearLayout.LayoutParams(0, dp(44), 1));
-        verificationActions.addView(verificationSasButton, new LinearLayout.LayoutParams(0, dp(44), 1));
         body.addView(verificationActions);
+
+        LinearLayout methodActions = new LinearLayout(this);
+        methodActions.setOrientation(LinearLayout.HORIZONTAL);
+        verificationSasButton = actionButton("SAS");
+        verificationSasButton.setOnClickListener((View v) -> matrixRuntime.startSasVerification());
+        verificationQrButton = actionButton("Show QR");
+        verificationQrButton.setOnClickListener((View v) -> matrixRuntime.generateQrVerification());
+        verificationQrScanButton = actionButton("Scan QR");
+        verificationQrScanButton.setOnClickListener((View v) -> startVerificationQrScan());
+        methodActions.addView(verificationSasButton, new LinearLayout.LayoutParams(0, dp(44), 1));
+        methodActions.addView(verificationQrButton, new LinearLayout.LayoutParams(0, dp(44), 1));
+        methodActions.addView(verificationQrScanButton, new LinearLayout.LayoutParams(0, dp(44), 1));
+        body.addView(methodActions);
 
         LinearLayout sasActions = new LinearLayout(this);
         sasActions.setOrientation(LinearLayout.HORIZONTAL);
@@ -427,12 +484,19 @@ public class MainActivity extends Activity {
         verificationMatchButton.setOnClickListener((View v) -> matrixRuntime.confirmSasVerification());
         verificationMismatchButton = actionButton("Mismatch");
         verificationMismatchButton.setOnClickListener((View v) -> matrixRuntime.mismatchSasVerification());
-        verificationCancelButton = actionButton("Cancel");
-        verificationCancelButton.setOnClickListener((View v) -> matrixRuntime.cancelVerification());
         sasActions.addView(verificationMatchButton, new LinearLayout.LayoutParams(0, dp(44), 1));
         sasActions.addView(verificationMismatchButton, new LinearLayout.LayoutParams(0, dp(44), 1));
-        sasActions.addView(verificationCancelButton, new LinearLayout.LayoutParams(0, dp(44), 1));
         body.addView(sasActions);
+
+        LinearLayout qrActions = new LinearLayout(this);
+        qrActions.setOrientation(LinearLayout.HORIZONTAL);
+        verificationQrConfirmButton = actionButton("QR OK");
+        verificationQrConfirmButton.setOnClickListener((View v) -> matrixRuntime.confirmQrVerification());
+        verificationCancelButton = actionButton("Cancel");
+        verificationCancelButton.setOnClickListener((View v) -> matrixRuntime.cancelVerification());
+        qrActions.addView(verificationQrConfirmButton, new LinearLayout.LayoutParams(0, dp(44), 1));
+        qrActions.addView(verificationCancelButton, new LinearLayout.LayoutParams(0, dp(44), 1));
+        body.addView(qrActions);
         updateVerificationControls();
 
         body.addView(sectionTitle("ntfy push"));
@@ -698,6 +762,41 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void startVerificationQrScan() {
+        if (AppPrefs.accessToken(this).trim().isEmpty()) {
+            Toast.makeText(this, "Log in before verification", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (Build.VERSION.SDK_INT >= 23 && checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.CAMERA}, REQUEST_CAMERA);
+            return;
+        }
+        launchVerificationQrScanner();
+    }
+
+    private void launchVerificationQrScanner() {
+        IntentIntegrator integrator = new IntentIntegrator(this);
+        integrator.setDesiredBarcodeFormats(IntentIntegrator.QR_CODE);
+        integrator.setPrompt("Scan Matrix verification QR");
+        integrator.setBeepEnabled(false);
+        integrator.setOrientationLocked(false);
+        integrator.initiateScan();
+    }
+
+    private void handleVerificationQrScan(IntentResult result) {
+        if (result.getContents() == null) {
+            Toast.makeText(this, "QR scan cancelled", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        byte[] rawBytes = result.getRawBytes();
+        if (rawBytes == null || rawBytes.length == 0) {
+            rawBytes = result.getContents().getBytes(StandardCharsets.ISO_8859_1);
+        }
+        String qrCodeBase64 = Base64.encodeToString(rawBytes, Base64.NO_WRAP);
+        setBusy("Scanning verification QR...");
+        matrixRuntime.scanQrVerification(qrCodeBase64);
+    }
+
     private int dp(int value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
@@ -763,13 +862,23 @@ public class MainActivity extends Activity {
         verificationStartButton.setEnabled(signedIn);
         verificationAcceptButton.setEnabled(verificationState.canAccept);
         verificationSasButton.setEnabled(verificationState.canStartSas);
+        verificationQrButton.setEnabled(verificationState.canShowQr);
+        verificationQrScanButton.setEnabled(verificationState.canScanQr);
         verificationMatchButton.setEnabled(verificationState.canConfirmSas);
         verificationMismatchButton.setEnabled(verificationState.canConfirmSas);
+        verificationQrConfirmButton.setEnabled(verificationState.canConfirmQr);
         verificationCancelButton.setEnabled(verificationState.phaseCode > 0 && verificationState.phaseCode < 5);
+        renderVerificationQr();
     }
 
     private String verificationStatusText() {
         StringBuilder builder = new StringBuilder(verificationState.summary());
+        if (!verificationState.qrCodeBase64.isEmpty()) {
+            builder.append("\nQR: scan this code from the other device.");
+        }
+        if (verificationState.canConfirmQr) {
+            builder.append("\nQR: confirm only after the other device says it scanned this code.");
+        }
         if (!verificationState.sasDecimal.isEmpty()) {
             builder.append("\nDecimal: ").append(verificationState.sasDecimal);
         }
@@ -777,6 +886,47 @@ public class MainActivity extends Activity {
             builder.append("\nEmoji:\n").append(verificationState.sasEmoji);
         }
         return builder.toString();
+    }
+
+    private void renderVerificationQr() {
+        if (verificationQrCard == null || verificationQrImage == null) {
+            return;
+        }
+        String qrCode = verificationState.qrCodeBase64;
+        if (qrCode.isEmpty()) {
+            renderedVerificationQrBase64 = "";
+            verificationQrImage.setImageDrawable(null);
+            verificationQrCard.setVisibility(View.GONE);
+            return;
+        }
+        verificationQrCard.setVisibility(View.VISIBLE);
+        if (qrCode.equals(renderedVerificationQrBase64)) {
+            return;
+        }
+        try {
+            verificationQrImage.setImageBitmap(qrBitmapFromBase64(qrCode, dp(248)));
+            renderedVerificationQrBase64 = qrCode;
+        } catch (Exception e) {
+            renderedVerificationQrBase64 = "";
+            verificationQrImage.setImageDrawable(null);
+            verificationQrCard.setVisibility(View.GONE);
+            Toast.makeText(this, "Could not render verification QR", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private Bitmap qrBitmapFromBase64(String base64, int size) throws WriterException {
+        byte[] bytes = Base64.decode(base64, Base64.DEFAULT);
+        String contents = new String(bytes, StandardCharsets.ISO_8859_1);
+        EnumMap<EncodeHintType, Object> hints = new EnumMap<>(EncodeHintType.class);
+        hints.put(EncodeHintType.CHARACTER_SET, "ISO-8859-1");
+        BitMatrix matrix = new QRCodeWriter().encode(contents, BarcodeFormat.QR_CODE, size, size, hints);
+        Bitmap bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+        for (int y = 0; y < size; y++) {
+            for (int x = 0; x < size; x++) {
+                bitmap.setPixel(x, y, matrix.get(x, y) ? Color.BLACK : Color.WHITE);
+            }
+        }
+        return bitmap;
     }
 
     private void syncNow(boolean userInitiated) {
