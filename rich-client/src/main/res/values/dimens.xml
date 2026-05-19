@@ -1,0 +1,14 @@
+<resources>
+    <dimen name="rich_space_1">1dp</dimen>
+    <dimen name="rich_space_4">4dp</dimen>
+    <dimen name="rich_space_8">8dp</dimen>
+    <dimen name="rich_space_12">12dp</dimen>
+    <dimen name="rich_space_16">16dp</dimen>
+    <dimen name="rich_room_avatar_size">56dp</dimen>
+    <dimen name="rich_toolbar_avatar_size">40dp</dimen>
+    <dimen name="rich_message_avatar_size">44dp</dimen>
+    <dimen name="rich_composer_min_height">52dp</dimen>
+    <dimen name="rich_bubble_radius">14dp</dimen>
+    <dimen name="rich_bubble_tail_size">10dp</dimen>
+    <dimen name="rich_bubble_max_width">320dp</dimen>
+</resources>

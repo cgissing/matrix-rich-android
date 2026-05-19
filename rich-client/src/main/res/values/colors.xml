@@ -1,0 +1,19 @@
+<resources>
+    <color name="rich_background">#F6F7F9</color>
+    <color name="rich_surface">#FFFFFF</color>
+    <color name="rich_surface_variant">#F1F5F9</color>
+    <color name="rich_separator">#D9DEE7</color>
+    <color name="rich_primary">#2F7D6D</color>
+    <color name="rich_primary_dark">#246457</color>
+    <color name="rich_primary_soft">#E1F1ED</color>
+    <color name="rich_text_primary">#171F2A</color>
+    <color name="rich_text_secondary">#5B687C</color>
+    <color name="rich_text_tertiary">#8792A4</color>
+    <color name="rich_message_bg_incoming">#F1F5F9</color>
+    <color name="rich_message_bg_outgoing">#2F7D6D</color>
+    <color name="rich_avatar_bg">#DDE7F0</color>
+    <color name="rich_avatar_text">#2E4057</color>
+    <color name="rich_unread">#E94852</color>
+    <color name="rich_warning_bg">#FFF7ED</color>
+    <color name="rich_warning_text">#7C2D12</color>
+</resources>

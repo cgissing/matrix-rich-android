@@ -4,26 +4,23 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.graphics.Color;
-import android.graphics.Typeface;
-import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.text.Editable;
-import android.text.InputType;
 import android.text.TextWatcher;
-import android.view.Gravity;
+import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.WebView;
-import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
-import android.widget.HorizontalScrollView;
+import android.widget.ImageButton;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
-import android.widget.ScrollView;
 import android.widget.TextView;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
 import chat.richclient.bridge.BridgeCommand;
 import chat.richclient.bridge.BridgeEvent;
 import chat.richclient.bridge.RuntimeBridge;
@@ -31,6 +28,9 @@ import chat.richclient.bridge.RuntimeState;
 import chat.richclient.push.RichUnifiedPushReceiver;
 import chat.richclient.runtime.RuntimeWebViewHost;
 import chat.richclient.ui.RichMarkdownRenderer;
+import chat.richclient.ui.RoomListAdapter;
+import chat.richclient.ui.TimelineAdapter;
+import com.google.android.material.button.MaterialButton;
 import java.util.ArrayList;
 import java.util.List;
 import org.json.JSONException;
@@ -38,34 +38,48 @@ import org.json.JSONObject;
 import org.unifiedpush.android.connector.UnifiedPush;
 
 public class MainActivity extends AppCompatActivity implements RuntimeBridge.Listener {
-    private static final String DEFAULT_REACTION_KEY = "\uD83D\uDC4D";
-
     private RuntimeState runtimeState = new RuntimeState();
     private RuntimeWebViewHost runtimeHost;
+    private RoomListAdapter roomListAdapter;
+    private TimelineAdapter timelineAdapter;
+    private LinearLayout loginPanel;
+    private LinearLayout chatContainer;
+    private LinearLayout roomListPane;
+    private LinearLayout roomDetailPane;
+    private View masterDetailDivider;
     private TextView runtimeStatus;
     private TextView authStatus;
     private TextView syncStatus;
     private TextView pushStatus;
-    private TextView typingStatus;
-    private LinearLayout roomList;
-    private LinearLayout timeline;
+    private TextView roomListHeader;
+    private TextView roomToolbarAvatar;
+    private ImageView roomToolbarDecoration;
+    private ImageButton roomToolbarBackButton;
+    private TextView roomToolbarTitle;
+    private TextView roomToolbarSubtitle;
     private LinearLayout verificationList;
+    private TextView typingStatus;
+    private EditText homeserverInput;
+    private EditText usernameInput;
+    private EditText passwordInput;
     private EditText composerInput;
-    private RichMarkdownRenderer markdownRenderer;
+    private RecyclerView timelineRecyclerView;
     private BroadcastReceiver pushReceiver;
+    private boolean showingRoomList = true;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        markdownRenderer = new RichMarkdownRenderer(this);
+        setContentView(R.layout.activity_rich_home);
 
+        RichMarkdownRenderer markdownRenderer = new RichMarkdownRenderer(this);
         RuntimeBridge bridge = new RuntimeBridge(this);
         runtimeHost = new RuntimeWebViewHost(this, bridge);
 
-        FrameLayout root = new FrameLayout(this);
-        root.addView(createMainContent());
-        root.addView(runtimeHost.view(), hiddenRuntimeLayoutParams());
-        setContentView(root);
+        bindViews();
+        configureLists(markdownRenderer);
+        configureActions();
+        attachHiddenRuntime();
 
         registerPushReceiver();
         runtimeHost.loadRuntime();
@@ -81,141 +95,64 @@ public class MainActivity extends AppCompatActivity implements RuntimeBridge.Lis
         super.onDestroy();
     }
 
-    private View createMainContent() {
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(Color.rgb(246, 247, 249));
-
-        root.addView(createToolbar());
-        root.addView(createLoginPanel());
-
-        LinearLayout content = new LinearLayout(this);
-        boolean compact = getResources().getConfiguration().screenWidthDp < 600;
-        content.setOrientation(compact ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
-        content.setPadding(dp(12), dp(8), dp(12), dp(8));
-        root.addView(content, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                0,
-                1F));
-
-        if (compact) {
-            content.addView(createRoomListPanel(), new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    dp(176)));
-            content.addView(createTimelinePanel(), new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    0,
-                    1F));
-        } else {
-            content.addView(createRoomListPanel(), new LinearLayout.LayoutParams(
-                    dp(220),
-                    ViewGroup.LayoutParams.MATCH_PARENT));
-            content.addView(createTimelinePanel(), new LinearLayout.LayoutParams(
-                    0,
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    1F));
+    @Override
+    public void onBackPressed() {
+        if (isCompact() && !showingRoomList) {
+            showingRoomList = true;
+            renderPanes();
+            return;
         }
-
-        return root;
+        super.onBackPressed();
     }
 
-    private View createToolbar() {
-        LinearLayout toolbar = new LinearLayout(this);
-        toolbar.setOrientation(LinearLayout.VERTICAL);
-        toolbar.setPadding(dp(16), dp(12), dp(16), dp(10));
-        toolbar.setBackgroundColor(Color.WHITE);
-
-        TextView title = new TextView(this);
-        title.setText("Matrix Rich");
-        title.setTextColor(Color.rgb(23, 31, 42));
-        title.setTextSize(20);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
-        toolbar.addView(title);
-
-        runtimeStatus = smallStatus("Runtime starting");
-        syncStatus = smallStatus("Sync idle");
-        pushStatus = smallStatus("Push not registered");
-        toolbar.addView(runtimeStatus);
-        toolbar.addView(syncStatus);
-        toolbar.addView(pushStatus);
-
-        return toolbar;
+    private void bindViews() {
+        loginPanel = findViewById(R.id.loginPanel);
+        chatContainer = findViewById(R.id.chatContainer);
+        roomListPane = findViewById(R.id.roomListPane);
+        roomDetailPane = findViewById(R.id.roomDetailPane);
+        masterDetailDivider = findViewById(R.id.masterDetailDivider);
+        runtimeStatus = findViewById(R.id.runtimeStatus);
+        authStatus = findViewById(R.id.authStatus);
+        syncStatus = findViewById(R.id.syncStatus);
+        pushStatus = findViewById(R.id.pushStatus);
+        roomListHeader = findViewById(R.id.roomListHeader);
+        roomToolbarAvatar = findViewById(R.id.roomToolbarAvatarImageView);
+        roomToolbarDecoration = findViewById(R.id.roomToolbarDecorationImageView);
+        roomToolbarBackButton = findViewById(R.id.roomToolbarBackButton);
+        roomToolbarTitle = findViewById(R.id.roomToolbarTitleView);
+        roomToolbarSubtitle = findViewById(R.id.roomToolbarSubtitleView);
+        verificationList = findViewById(R.id.verificationList);
+        typingStatus = findViewById(R.id.typingStatus);
+        homeserverInput = findViewById(R.id.homeserverInput);
+        usernameInput = findViewById(R.id.usernameInput);
+        passwordInput = findViewById(R.id.passwordInput);
+        composerInput = findViewById(R.id.composerEditText);
+        timelineRecyclerView = findViewById(R.id.timelineRecyclerView);
     }
 
-    private View createLoginPanel() {
-        LinearLayout panel = new LinearLayout(this);
-        panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(dp(12), dp(8), dp(12), dp(8));
-        panel.setBackgroundColor(Color.WHITE);
+    private void configureLists(RichMarkdownRenderer markdownRenderer) {
+        RecyclerView roomRecyclerView = findViewById(R.id.roomRecyclerView);
+        roomRecyclerView.setLayoutManager(new LinearLayoutManager(this));
+        roomListAdapter = new RoomListAdapter(this::openRoom);
+        roomRecyclerView.setAdapter(roomListAdapter);
 
-        EditText homeserver = compactInput("Homeserver URL");
-        EditText username = compactInput("Username");
-        EditText password = compactInput("Password");
-        password.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.addView(homeserver, new LinearLayout.LayoutParams(0, dp(44), 1.4F));
-        row.addView(username, new LinearLayout.LayoutParams(0, dp(44), 1F));
-        row.addView(password, new LinearLayout.LayoutParams(0, dp(44), 1F));
-
-        Button login = new Button(this);
-        login.setText("Login");
-        row.addView(login, new LinearLayout.LayoutParams(dp(92), dp(44)));
-        panel.addView(row);
-
-        authStatus = smallStatus("Not logged in");
-        panel.addView(authStatus);
-
-        login.setOnClickListener(view -> sendLogin(homeserver, username, password));
-
-        return panel;
+        LinearLayoutManager timelineLayoutManager = new LinearLayoutManager(this);
+        timelineLayoutManager.setStackFromEnd(true);
+        timelineRecyclerView.setLayoutManager(timelineLayoutManager);
+        timelineAdapter = new TimelineAdapter(markdownRenderer, this::sendReaction);
+        timelineRecyclerView.setAdapter(timelineAdapter);
     }
 
-    private View createRoomListPanel() {
-        HorizontalScrollView horizontal = new HorizontalScrollView(this);
-        horizontal.setFillViewport(true);
+    private void configureActions() {
+        MaterialButton loginButton = findViewById(R.id.loginButton);
+        ImageButton sendButton = findViewById(R.id.sendButton);
 
-        ScrollView vertical = new ScrollView(this);
-        roomList = new LinearLayout(this);
-        roomList.setOrientation(LinearLayout.VERTICAL);
-        roomList.setPadding(0, 0, dp(10), 0);
-        vertical.addView(roomList);
-        horizontal.addView(vertical);
-        return horizontal;
-    }
-
-    private View createTimelinePanel() {
-        LinearLayout panel = new LinearLayout(this);
-        panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setBackground(panelBackground(Color.WHITE, Color.rgb(226, 232, 240), dp(8)));
-
-        ScrollView scroll = new ScrollView(this);
-        timeline = new LinearLayout(this);
-        timeline.setOrientation(LinearLayout.VERTICAL);
-        timeline.setPadding(dp(12), dp(12), dp(12), dp(8));
-        scroll.addView(timeline);
-        panel.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1F));
-
-        typingStatus = smallStatus("");
-        typingStatus.setPadding(dp(12), 0, dp(12), dp(4));
-        panel.addView(typingStatus);
-
-        verificationList = new LinearLayout(this);
-        verificationList.setOrientation(LinearLayout.VERTICAL);
-        verificationList.setPadding(dp(10), 0, dp(10), dp(4));
-        panel.addView(verificationList);
-
-        LinearLayout composer = new LinearLayout(this);
-        composer.setOrientation(LinearLayout.HORIZONTAL);
-        composer.setPadding(dp(10), dp(8), dp(10), dp(10));
-        composerInput = compactInput("Message");
-        Button send = new Button(this);
-        send.setText("Send");
-        composer.addView(composerInput, new LinearLayout.LayoutParams(0, dp(44), 1F));
-        composer.addView(send, new LinearLayout.LayoutParams(dp(86), dp(44)));
-        panel.addView(composer);
-
+        loginButton.setOnClickListener(view -> sendLogin());
+        sendButton.setOnClickListener(view -> sendComposerMessage());
+        roomToolbarBackButton.setOnClickListener(view -> {
+            showingRoomList = true;
+            renderPanes();
+        });
         composerInput.addTextChangedListener(new TextWatcher() {
             @Override
             public void beforeTextChanged(CharSequence s, int start, int count, int after) {
@@ -230,35 +167,23 @@ public class MainActivity extends AppCompatActivity implements RuntimeBridge.Lis
             public void afterTextChanged(Editable s) {
             }
         });
-
-        send.setOnClickListener(view -> sendComposerMessage());
-
-        return panel;
     }
 
-    private TextView smallStatus(String text) {
-        TextView status = new TextView(this);
-        status.setText(text);
-        status.setTextColor(Color.rgb(91, 104, 124));
-        status.setTextSize(12);
-        return status;
-    }
-
-    private EditText compactInput(String hint) {
-        EditText input = new EditText(this);
-        input.setHint(hint);
-        input.setSingleLine(true);
-        input.setTextSize(13);
-        input.setPadding(dp(8), 0, dp(8), 0);
-        input.setBackground(panelBackground(Color.rgb(245, 247, 250), Color.rgb(218, 224, 232), dp(6)));
-        return input;
+    private void attachHiddenRuntime() {
+        FrameLayout runtimeContainer = findViewById(R.id.runtimeContainer);
+        WebView view = runtimeHost.view();
+        view.setAlpha(0F);
+        runtimeContainer.addView(view, new FrameLayout.LayoutParams(dp(1), dp(1)));
     }
 
     private void renderState() {
         renderStatus();
-        renderRooms();
-        renderTimeline();
+        renderRoomToolbar();
         renderVerification();
+        roomListAdapter.submit(runtimeState);
+        timelineAdapter.submit(runtimeState);
+        scrollTimelineToBottom();
+        renderPanes();
     }
 
     private void renderStatus() {
@@ -269,177 +194,94 @@ public class MainActivity extends AppCompatActivity implements RuntimeBridge.Lis
         } else {
             runtimeStatus.setText("Runtime starting");
         }
-        if (runtimeState.loggedIn) {
-            authStatus.setText("Session: " + runtimeState.userId);
-        } else {
-            authStatus.setText("Not logged in");
-        }
+        authStatus.setText(runtimeState.loggedIn ? "Session: " + runtimeState.userId : "Not logged in");
         syncStatus.setText("Sync: " + runtimeState.syncState
                 + (runtimeState.syncError.isEmpty() ? "" : " / " + runtimeState.syncError));
         pushStatus.setText("Push: " + runtimeState.pushStatus);
         typingStatus.setText(runtimeState.typingSummaryForSelectedRoom());
+        roomListHeader.setText(runtimeState.rooms.isEmpty() ? "Rooms" : "Rooms (" + runtimeState.rooms.size() + ")");
     }
 
-    private void renderRooms() {
-        roomList.removeAllViews();
-        if (runtimeState.rooms.isEmpty()) {
-            roomList.addView(emptyText("Login to load rooms"));
+    private void renderRoomToolbar() {
+        RuntimeState.RoomSummary selected = selectedRoom();
+        if (selected == null) {
+            roomToolbarTitle.setText("No room selected");
+            roomToolbarSubtitle.setText(runtimeState.loggedIn ? "Choose a room" : "Login to load rooms");
+            roomToolbarAvatar.setText("M");
+            roomToolbarDecoration.setVisibility(View.GONE);
             return;
         }
-        for (RuntimeState.RoomSummary room : runtimeState.rooms) {
-            roomList.addView(roomRow(room));
-        }
-    }
 
-    private View roomRow(RuntimeState.RoomSummary room) {
-        boolean selected = room.roomId.equals(runtimeState.selectedRoomId);
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.VERTICAL);
-        row.setPadding(dp(10), dp(8), dp(10), dp(8));
-        row.setBackground(panelBackground(
-                selected ? Color.rgb(225, 241, 237) : Color.TRANSPARENT,
-                selected ? Color.rgb(47, 125, 109) : Color.TRANSPARENT,
-                dp(8)));
-
-        TextView title = new TextView(this);
-        title.setText(room.name + (room.encrypted ? "  lock" : ""));
-        title.setTextColor(Color.rgb(23, 31, 42));
-        title.setTextSize(14);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
-        title.setSingleLine(true);
-        row.addView(title);
-
-        TextView sub = new TextView(this);
-        String preview = room.lastMessage.isEmpty() ? room.roomId : room.lastMessage;
-        if (room.unreadCount > 0) {
-            preview = "(" + room.unreadCount + ") " + preview;
-        }
-        sub.setText(preview);
-        sub.setTextColor(Color.rgb(91, 104, 124));
-        sub.setTextSize(11);
-        sub.setMaxLines(1);
-        row.addView(sub);
-
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        params.setMargins(0, 0, 0, dp(8));
-        row.setLayoutParams(params);
-        row.setOnClickListener(view -> openRoom(room.roomId));
-        return row;
-    }
-
-    private void renderTimeline() {
-        timeline.removeAllViews();
-        if (runtimeState.selectedRoomId.isEmpty()) {
-            timeline.addView(emptyText("No room selected"));
-            return;
-        }
-        if (runtimeState.timelineForSelectedRoom().isEmpty()) {
-            timeline.addView(emptyText("No messages loaded"));
-            return;
-        }
-        for (RuntimeState.TimelineEvent event : runtimeState.timelineForSelectedRoom()) {
-            addEventBubble(event);
-        }
-    }
-
-    private void addEventBubble(RuntimeState.TimelineEvent event) {
-        LinearLayout bubble = new LinearLayout(this);
-        bubble.setOrientation(LinearLayout.VERTICAL);
-        bubble.setPadding(dp(10), dp(8), dp(10), dp(8));
-        bubble.setBackground(panelBackground(
-                event.outgoing ? Color.rgb(47, 125, 109) : Color.rgb(241, 245, 249),
-                Color.TRANSPARENT,
-                dp(8)));
-
-        TextView sender = new TextView(this);
-        sender.setText(event.outgoing ? "You" : event.sender);
-        sender.setTextColor(event.outgoing ? Color.rgb(225, 245, 241) : Color.rgb(71, 85, 105));
-        sender.setTextSize(11);
-        bubble.addView(sender);
-
-        TextView body = new TextView(this);
-        body.setTextSize(14);
-        body.setTextColor(event.outgoing ? Color.WHITE : Color.rgb(23, 31, 42));
-        markdownRenderer.setMarkdown(body, event.body);
-        bubble.addView(body);
-
-        LinearLayout reactions = new LinearLayout(this);
-        reactions.setOrientation(LinearLayout.HORIZONTAL);
-        for (RuntimeState.ReactionSummary reaction : runtimeState.reactionsForEvent(event.eventId)) {
-            reactions.addView(reactionButton(event, reaction));
-        }
-        if (reactions.getChildCount() > 0) {
-            bubble.addView(reactions);
-        }
-
-        bubble.setOnLongClickListener(view -> {
-            sendReaction(event.eventId, DEFAULT_REACTION_KEY);
-            return true;
-        });
-
-        LinearLayout line = new LinearLayout(this);
-        line.setGravity(event.outgoing ? Gravity.RIGHT : Gravity.LEFT);
-        line.addView(bubble, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        params.setMargins(0, 0, 0, dp(8));
-        timeline.addView(line, params);
-    }
-
-    private View reactionButton(RuntimeState.TimelineEvent event, RuntimeState.ReactionSummary reaction) {
-        TextView button = new TextView(this);
-        button.setText(reaction.key + " " + reaction.count);
-        button.setTextSize(12);
-        button.setTextColor(reaction.selected ? Color.rgb(47, 125, 109) : Color.rgb(71, 85, 105));
-        button.setPadding(dp(8), dp(3), dp(8), dp(3));
-        button.setBackground(panelBackground(Color.WHITE, Color.rgb(203, 213, 225), dp(10)));
-        button.setOnClickListener(view -> sendReaction(event.eventId, reaction.key));
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        params.setMargins(0, dp(6), dp(6), 0);
-        button.setLayoutParams(params);
-        return button;
+        String name = selected.name.isEmpty() ? selected.roomId : selected.name;
+        roomToolbarTitle.setText(name);
+        roomToolbarSubtitle.setText(selected.lastMessage.isEmpty() ? selected.roomId : selected.lastMessage);
+        roomToolbarAvatar.setText(initials(name));
+        roomToolbarDecoration.setVisibility(selected.encrypted ? View.VISIBLE : View.GONE);
     }
 
     private void renderVerification() {
         verificationList.removeAllViews();
+        LayoutInflater inflater = LayoutInflater.from(this);
         for (RuntimeState.VerificationSummary verification : runtimeState.verifications) {
-            LinearLayout row = new LinearLayout(this);
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setPadding(dp(8), dp(6), dp(8), dp(6));
-            row.setBackground(panelBackground(Color.rgb(255, 247, 237), Color.rgb(251, 146, 60), dp(8)));
-
-            TextView label = smallStatus("Verification " + verification.state + " from " + verification.userId);
-            label.setTextColor(Color.rgb(124, 45, 18));
-            row.addView(label, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1F));
-
-            Button accept = new Button(this);
-            accept.setText("Accept");
+            View row = inflater.inflate(R.layout.view_rich_verification, verificationList, false);
+            TextView label = row.findViewById(R.id.verificationLabel);
+            MaterialButton accept = row.findViewById(R.id.verificationAcceptButton);
+            label.setText("Verification " + verification.state + " from " + verification.userId);
             accept.setOnClickListener(view -> sendVerificationAction(verification, "accept"));
-            row.addView(accept, new LinearLayout.LayoutParams(dp(92), dp(40)));
             verificationList.addView(row);
+        }
+        verificationList.setVisibility(runtimeState.verifications.isEmpty() ? View.GONE : View.VISIBLE);
+    }
+
+    private void renderPanes() {
+        boolean hasSessionSurface = runtimeState.loggedIn || !runtimeState.rooms.isEmpty();
+        loginPanel.setVisibility(runtimeState.loggedIn ? View.GONE : View.VISIBLE);
+        chatContainer.setVisibility(hasSessionSurface ? View.VISIBLE : View.GONE);
+        composerInput.setEnabled(!runtimeState.selectedRoomId.isEmpty());
+
+        if (isCompact()) {
+            LinearLayout.LayoutParams roomParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT);
+            roomListPane.setLayoutParams(roomParams);
+            LinearLayout.LayoutParams detailParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT);
+            roomDetailPane.setLayoutParams(detailParams);
+            roomListPane.setVisibility(showingRoomList ? View.VISIBLE : View.GONE);
+            roomDetailPane.setVisibility(showingRoomList ? View.GONE : View.VISIBLE);
+            masterDetailDivider.setVisibility(View.GONE);
+            roomToolbarBackButton.setVisibility(showingRoomList ? View.GONE : View.VISIBLE);
+        } else {
+            LinearLayout.LayoutParams roomParams = new LinearLayout.LayoutParams(
+                    dp(320),
+                    ViewGroup.LayoutParams.MATCH_PARENT);
+            roomListPane.setLayoutParams(roomParams);
+            LinearLayout.LayoutParams detailParams = new LinearLayout.LayoutParams(
+                    0,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    1F);
+            roomDetailPane.setLayoutParams(detailParams);
+            roomListPane.setVisibility(View.VISIBLE);
+            roomDetailPane.setVisibility(View.VISIBLE);
+            masterDetailDivider.setVisibility(View.VISIBLE);
+            roomToolbarBackButton.setVisibility(View.GONE);
         }
     }
 
-    private TextView emptyText(String text) {
-        TextView view = smallStatus(text);
-        view.setPadding(dp(10), dp(10), dp(10), dp(10));
-        return view;
+    private void scrollTimelineToBottom() {
+        int count = timelineAdapter.getItemCount();
+        if (count > 0) {
+            timelineRecyclerView.scrollToPosition(count - 1);
+        }
     }
 
-    private void sendLogin(EditText homeserver, EditText username, EditText password) {
+    private void sendLogin() {
         try {
             JSONObject payload = new JSONObject()
-                    .put("homeserver", homeserver.getText().toString())
-                    .put("username", username.getText().toString())
-                    .put("password", password.getText().toString());
+                    .put("homeserver", homeserverInput.getText().toString())
+                    .put("username", usernameInput.getText().toString())
+                    .put("password", passwordInput.getText().toString());
             runtimeHost.send(new BridgeCommand("auth.loginPassword", payload));
         } catch (JSONException failure) {
             onBridgeError("Unable to create login command");
@@ -447,6 +289,7 @@ public class MainActivity extends AppCompatActivity implements RuntimeBridge.Lis
     }
 
     private void openRoom(String roomId) {
+        showingRoomList = false;
         runtimeState = runtimeState.selectRoom(roomId);
         renderState();
         try {
@@ -605,22 +448,29 @@ public class MainActivity extends AppCompatActivity implements RuntimeBridge.Lis
         ContextCompat.registerReceiver(this, pushReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED);
     }
 
-    private FrameLayout.LayoutParams hiddenRuntimeLayoutParams() {
-        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(dp(1), dp(1));
-        params.gravity = Gravity.BOTTOM | Gravity.RIGHT;
-        WebView view = runtimeHost.view();
-        view.setAlpha(0F);
-        return params;
+    private RuntimeState.RoomSummary selectedRoom() {
+        for (RuntimeState.RoomSummary room : runtimeState.rooms) {
+            if (room.roomId.equals(runtimeState.selectedRoomId)) {
+                return room;
+            }
+        }
+        return null;
     }
 
-    private GradientDrawable panelBackground(int fill, int stroke, int radius) {
-        GradientDrawable drawable = new GradientDrawable();
-        drawable.setColor(fill);
-        drawable.setCornerRadius(radius);
-        if (stroke != Color.TRANSPARENT) {
-            drawable.setStroke(dp(1), stroke);
+    private boolean isCompact() {
+        return getResources().getConfiguration().screenWidthDp < 600;
+    }
+
+    private String initials(String value) {
+        String trimmed = value == null ? "" : value.trim();
+        if (trimmed.isEmpty()) {
+            return "?";
         }
-        return drawable;
+        char first = trimmed.charAt(0);
+        if (first == '!' || first == '#' || first == '@') {
+            return String.valueOf(Character.toUpperCase(trimmed.length() > 1 ? trimmed.charAt(1) : first));
+        }
+        return String.valueOf(Character.toUpperCase(first));
     }
 
     private int dp(int value) {

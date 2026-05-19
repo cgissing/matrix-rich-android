@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/roomToolbarContentView"
+    android:layout_width="match_parent"
+    android:layout_height="64dp"
+    android:background="@color/rich_surface"
+    android:paddingEnd="12dp">
+
+    <ImageButton
+        android:id="@+id/roomToolbarBackButton"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:contentDescription="Back"
+        android:src="@drawable/rich_ic_back"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <TextView
+        android:id="@+id/roomToolbarAvatarImageView"
+        android:layout_width="@dimen/rich_toolbar_avatar_size"
+        android:layout_height="@dimen/rich_toolbar_avatar_size"
+        android:background="@drawable/rich_avatar_circle"
+        android:gravity="center"
+        android:textColor="@color/rich_avatar_text"
+        android:textSize="14sp"
+        android:textStyle="bold"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toEndOf="@id/roomToolbarBackButton"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <ImageView
+        android:id="@+id/roomToolbarDecorationImageView"
+        android:layout_width="16dp"
+        android:layout_height="16dp"
+        android:layout_marginStart="7dp"
+        android:src="@drawable/rich_ic_lock"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="@id/roomToolbarTitleView"
+        app:layout_constraintStart_toEndOf="@id/roomToolbarAvatarImageView"
+        app:layout_constraintTop_toTopOf="@id/roomToolbarTitleView" />
+
+    <TextView
+        android:id="@+id/roomToolbarTitleView"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="7dp"
+        android:layout_marginEnd="8dp"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:text="No room selected"
+        android:textColor="@color/rich_text_primary"
+        android:textSize="17sp"
+        android:textStyle="bold"
+        app:layout_constraintBottom_toTopOf="@id/roomToolbarSubtitleView"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toEndOf="@id/roomToolbarDecorationImageView"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintVertical_chainStyle="packed"
+        app:layout_goneMarginStart="7dp" />
+
+    <TextView
+        android:id="@+id/roomToolbarSubtitleView"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="7dp"
+        android:layout_marginEnd="8dp"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:text="Select a room"
+        android:textColor="@color/rich_text_secondary"
+        android:textSize="12sp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toEndOf="@id/roomToolbarAvatarImageView"
+        app:layout_constraintTop_toBottomOf="@id/roomToolbarTitleView" />
+</androidx.constraintlayout.widget.ConstraintLayout>

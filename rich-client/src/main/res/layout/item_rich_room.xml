@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/itemRoomLayout"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@color/rich_surface"
+    android:clickable="true"
+    android:focusable="true"
+    android:foreground="?attr/selectableItemBackground">
+
+    <View
+        android:id="@+id/roomUnreadIndicator"
+        android:layout_width="4dp"
+        android:layout_height="0dp"
+        android:background="@color/rich_unread"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <FrameLayout
+        android:id="@+id/roomAvatarContainer"
+        android:layout_width="@dimen/rich_room_avatar_size"
+        android:layout_height="@dimen/rich_room_avatar_size"
+        android:layout_marginStart="8dp"
+        android:layout_marginTop="12dp"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <TextView
+            android:id="@+id/roomAvatarInitials"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@drawable/rich_avatar_circle"
+            android:gravity="center"
+            android:textColor="@color/rich_avatar_text"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <ImageView
+            android:id="@+id/roomEncryptedBadge"
+            android:layout_width="18dp"
+            android:layout_height="18dp"
+            android:layout_gravity="bottom|end"
+            android:background="@drawable/rich_avatar_circle"
+            android:padding="2dp"
+            android:src="@drawable/rich_ic_lock"
+            android:visibility="gone" />
+    </FrameLayout>
+
+    <TextView
+        android:id="@+id/roomNameView"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="16dp"
+        android:layout_marginTop="12dp"
+        android:layout_marginEnd="8dp"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:textColor="@color/rich_text_primary"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        app:layout_constraintEnd_toStartOf="@id/roomLastEventTimeView"
+        app:layout_constraintStart_toEndOf="@id/roomAvatarContainer"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <TextView
+        android:id="@+id/roomLastEventTimeView"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginEnd="12dp"
+        android:textColor="@color/rich_text_tertiary"
+        android:textSize="12sp"
+        app:layout_constraintBottom_toBottomOf="@id/roomNameView"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="@id/roomNameView" />
+
+    <TextView
+        android:id="@+id/subtitleView"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:layout_marginEnd="8dp"
+        android:ellipsize="end"
+        android:lines="2"
+        android:textColor="@color/rich_text_secondary"
+        android:textSize="14sp"
+        app:layout_constraintEnd_toStartOf="@id/roomUnreadCounterBadgeView"
+        app:layout_constraintStart_toStartOf="@id/roomNameView"
+        app:layout_constraintTop_toBottomOf="@id/roomNameView" />
+
+    <TextView
+        android:id="@+id/roomTypingView"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:layout_marginEnd="8dp"
+        android:ellipsize="end"
+        android:maxLines="2"
+        android:textColor="@color/rich_primary"
+        android:textSize="14sp"
+        android:textStyle="bold"
+        android:visibility="gone"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="@id/roomNameView"
+        app:layout_constraintTop_toBottomOf="@id/roomNameView" />
+
+    <TextView
+        android:id="@+id/roomUnreadCounterBadgeView"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:background="@drawable/rich_unread_badge"
+        android:gravity="center"
+        android:minWidth="24dp"
+        android:minHeight="24dp"
+        android:paddingStart="6dp"
+        android:paddingEnd="6dp"
+        android:textColor="@android:color/white"
+        android:textSize="13sp"
+        android:textStyle="bold"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="@id/subtitleView"
+        app:layout_constraintEnd_toEndOf="@id/roomLastEventTimeView"
+        app:layout_constraintStart_toEndOf="@id/subtitleView"
+        app:layout_constraintTop_toTopOf="@id/subtitleView" />
+
+    <Space
+        android:id="@+id/roomAvatarBottomSpace"
+        android:layout_width="0dp"
+        android:layout_height="12dp"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/roomAvatarContainer" />
+
+    <Space
+        android:id="@+id/roomLastEventBottomSpace"
+        android:layout_width="0dp"
+        android:layout_height="8dp"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/subtitleView" />
+
+    <androidx.constraintlayout.widget.Barrier
+        android:id="@+id/roomBottomBarrier"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        app:barrierDirection="bottom"
+        app:constraint_referenced_ids="roomAvatarBottomSpace,roomLastEventBottomSpace" />
+
+    <View
+        android:id="@+id/roomDividerView"
+        android:layout_width="0dp"
+        android:layout_height="1dp"
+        android:background="@color/rich_separator"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="@id/roomNameView"
+        app:layout_constraintTop_toBottomOf="@id/roomBottomBarrier" />
+</androidx.constraintlayout.widget.ConstraintLayout>
