@@ -28,4 +28,5 @@ dependencies {
     implementation libs.markwon.inlineParser
 
     testImplementation libs.tests.junit
+    testImplementation 'org.json:json:20240303'
 }
