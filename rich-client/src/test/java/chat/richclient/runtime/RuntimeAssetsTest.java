@@ -11,8 +11,8 @@ public class RuntimeAssetsTest {
     @Test
     public void bundledFallbackIndexLoadsMatrixRichBridgeBeforeElementBundle() throws Exception {
         File root = findRepoRoot();
-        String index = Files.readString(
-                new File(root, "rich-client/src/main/assets/element/index.html").toPath(),
+        String index = new String(
+                Files.readAllBytes(new File(root, "rich-client/src/main/assets/element/index.html").toPath()),
                 StandardCharsets.UTF_8);
 
         int bridge = index.indexOf("matrix-rich-runtime.js");
@@ -25,8 +25,8 @@ public class RuntimeAssetsTest {
     @Test
     public void bridgeScriptDeclaresSupportedCommandAndEventSurface() throws Exception {
         File root = findRepoRoot();
-        String script = Files.readString(
-                new File(root, "rich-client/src/main/assets/element/matrix-rich-runtime.js").toPath(),
+        String script = new String(
+                Files.readAllBytes(new File(root, "rich-client/src/main/assets/element/matrix-rich-runtime.js").toPath()),
                 StandardCharsets.UTF_8);
 
         assertTrue(script.contains("auth.loginPassword"));

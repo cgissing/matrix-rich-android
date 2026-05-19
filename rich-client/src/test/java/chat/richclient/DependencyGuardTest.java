@@ -12,8 +12,8 @@ public class DependencyGuardTest {
     @Test
     public void richClientDoesNotDependOnMatrixSdkAndroidOrLeakCanary() throws Exception {
         File root = findRepoRoot();
-        String buildGradle = Files.readString(
-                new File(root, "rich-client/build.gradle").toPath(),
+        String buildGradle = new String(
+                Files.readAllBytes(new File(root, "rich-client/build.gradle").toPath()),
                 StandardCharsets.UTF_8);
 
         assertFalse(buildGradle.contains(":matrix-sdk-android"));
@@ -24,8 +24,8 @@ public class DependencyGuardTest {
     @Test
     public void githubActionsOnlyBuildsRichClientArtifact() throws Exception {
         File root = findRepoRoot();
-        String workflow = Files.readString(
-                new File(root, ".github/workflows/android.yml").toPath(),
+        String workflow = new String(
+                Files.readAllBytes(new File(root, ".github/workflows/android.yml").toPath()),
                 StandardCharsets.UTF_8);
 
         assertTrue(workflow.contains(":rich-client:testDebugUnitTest"));
