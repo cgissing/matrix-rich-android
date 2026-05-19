@@ -31,6 +31,7 @@ import chat.richclient.bridge.RuntimeState;
 import chat.richclient.push.RichUnifiedPushReceiver;
 import chat.richclient.runtime.RuntimeWebViewHost;
 import chat.richclient.ui.RichMarkdownRenderer;
+import java.util.ArrayList;
 import java.util.List;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -532,9 +533,11 @@ public class MainActivity extends AppCompatActivity implements RuntimeBridge.Lis
 
     private void registerUnifiedPush() {
         try {
+            ArrayList<String> features = new ArrayList<>();
+            features.add(UnifiedPush.FEATURE_BYTES_MESSAGE);
             String distributor = UnifiedPush.getDistributor(this);
             if (distributor.isEmpty()) {
-                List<String> distributors = UnifiedPush.getDistributors(this);
+                List<String> distributors = UnifiedPush.getDistributors(this, features);
                 if (distributors.size() == 1) {
                     UnifiedPush.saveDistributor(this, distributors.get(0));
                 } else {
@@ -543,7 +546,7 @@ public class MainActivity extends AppCompatActivity implements RuntimeBridge.Lis
                     return;
                 }
             }
-            UnifiedPush.registerApp(this);
+            UnifiedPush.registerApp(this, "default", features, "");
             if (runtimeState.loggedIn) {
                 sendPushEndpointIfAvailable();
             }
