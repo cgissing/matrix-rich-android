@@ -1,6 +1,7 @@
 include ':vector-app'
 include ':vector'
 include ':vector-config'
+include ':rich-client'
 
 include ':library:core-utils'
 include ':library:ui-strings'

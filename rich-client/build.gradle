@@ -1,0 +1,31 @@
+apply plugin: 'com.android.application'
+
+android {
+    namespace "chat.richclient"
+    compileSdk versions.compileSdk
+
+    defaultConfig {
+        applicationId "chat.richclient"
+        minSdk versions.minSdk
+        targetSdk versions.targetSdk
+        versionCode 1
+        versionName "0.1.0"
+    }
+
+    compileOptions {
+        sourceCompatibility versions.sourceCompat
+        targetCompatibility versions.targetCompat
+    }
+}
+
+dependencies {
+    implementation libs.androidx.recyclerview
+    implementation libs.androidx.appCompat
+    implementation libs.google.material
+    implementation libs.markwon.core
+    implementation libs.markwon.extTables
+    implementation libs.markwon.extLatex
+    implementation libs.markwon.inlineParser
+
+    testImplementation libs.tests.junit
+}

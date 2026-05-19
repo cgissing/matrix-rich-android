@@ -8,7 +8,7 @@ on:
 
 jobs:
   build:
-    name: Build F-Droid debug APK
+    name: Build native UI web runtime APK
     runs-on: ubuntu-latest
 
     steps:
@@ -30,11 +30,14 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Build debug APK
-        run: ./gradlew --no-daemon :vector-app:assembleFdroidDebug --stacktrace
+      - name: Run rich-client unit tests
+        run: ./gradlew --no-daemon :rich-client:testDebugUnitTest --stacktrace
 
-      - name: Upload debug APKs
+      - name: Build rich-client debug APK
+        run: ./gradlew --no-daemon :rich-client:assembleDebug --stacktrace
+
+      - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: matrix-rich-schildichat-fdroid-debug-apks
-          path: vector-app/build/outputs/apk/fdroid/debug/*.apk
+          name: matrix-rich-native-ui-web-runtime-debug-apk
+          path: rich-client/build/outputs/apk/debug/*.apk
