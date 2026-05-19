@@ -1,0 +1,4 @@
+- Update codebase to Element v1.6.48
+- Fix persisting background sync setting with UP disabled
+- Add popup to inform background sync users about limitations on recent Android versions
+- Disable crash report prompt on app start

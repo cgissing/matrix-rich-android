@@ -1,18 +1,23 @@
-pluginManagement {
-    repositories {
-        google()
-        mavenCentral()
-        gradlePluginPortal()
-    }
-}
+include ':vector-app'
+include ':vector'
+include ':vector-config'
 
-dependencyResolutionManagement {
-    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-    repositories {
-        google()
-        mavenCentral()
-    }
-}
+include ':library:core-utils'
+include ':library:ui-strings'
+include ':library:ui-styles'
+include ':library:attachment-viewer'
+include ':library:multipicker'
 
-rootProject.name = "MatrixRichAndroid"
-include ":app"
+include ':library:external:jsonviewer'
+include ':library:external:diff-match-patch'
+include ':library:external:dialpad'
+include ':library:external:textdrawable'
+include ':library:external:autocomplete'
+include ':library:external:realmfieldnameshelper'
+include ':library:external:span'
+include ':library:external:barcodescanner:core'
+include ':library:external:barcodescanner:zxing'
+
+include ':library:rustCrypto'
+include ':matrix-sdk-android'
+include ':matrix-sdk-android-flow'

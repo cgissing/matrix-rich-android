@@ -1,0 +1,2 @@
+- Update codebase to Element v1.6.46
+- Catch some crashes related to foreground service restrictions on recent Android versions
