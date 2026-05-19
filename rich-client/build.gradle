@@ -22,9 +22,12 @@ dependencies {
     implementation libs.androidx.recyclerview
     implementation libs.androidx.appCompat
     implementation libs.google.material
+    implementation 'androidx.webkit:webkit:1.11.0'
+    implementation 'com.github.UnifiedPush:android-connector:2.1.1'
     implementation libs.markwon.core
     implementation libs.markwon.extTables
     implementation libs.markwon.extLatex
+    implementation libs.markwon.html
     implementation libs.markwon.inlineParser
 
     testImplementation libs.tests.junit
