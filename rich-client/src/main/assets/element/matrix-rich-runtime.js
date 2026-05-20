@@ -1,6 +1,26 @@
 (function () {
     "use strict";
 
+    if (typeof Promise.withResolvers !== "function") {
+        Object.defineProperty(Promise, "withResolvers", {
+            configurable: true,
+            writable: true,
+            value: function () {
+                var resolve;
+                var reject;
+                var promise = new Promise(function (promiseResolve, promiseReject) {
+                    resolve = promiseResolve;
+                    reject = promiseReject;
+                });
+                return {
+                    promise: promise,
+                    resolve: resolve,
+                    reject: reject
+                };
+            }
+        });
+    }
+
     var state = {
         client: null,
         currentRoomId: "",
@@ -49,6 +69,30 @@
             message: message,
             detail: error && (error.stack || error.message || String(error))
         });
+    }
+
+    function describeError(error) {
+        if (!error) {
+            return "unknown error";
+        }
+        if (error.data && error.data.error) {
+            return text(error.data.error);
+        }
+        if (error.errcode && error.message) {
+            return text(error.errcode) + ": " + text(error.message);
+        }
+        return text(error.message || error);
+    }
+
+    function describeCommandFailure(command, error) {
+        var type = command && command.type ? command.type : "unknown";
+        var detail = describeError(error);
+        if (type === "auth.loginPassword") {
+            postEvent("auth.state", { loggedIn: false, userId: "", status: "login_failed" });
+            postEvent("sync.state", { state: "login_failed", error: detail });
+            return "Login failed: " + detail;
+        }
+        return "Bridge command failed: " + type + ": " + detail;
     }
 
     function text(value) {
@@ -476,13 +520,15 @@
 
     window.MatrixRichRuntime = {
         receive: function (commandJson) {
+            var command;
             Promise.resolve()
                 .then(function () {
-                    return JSON.parse(commandJson);
+                    command = JSON.parse(commandJson);
+                    return command;
                 })
                 .then(handleCommand)
                 .catch(function (error) {
-                    postError("Bridge command failed", error);
+                    postError(describeCommandFailure(command, error), error);
                 });
         }
     };

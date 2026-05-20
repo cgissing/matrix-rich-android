@@ -39,6 +39,30 @@ public class RuntimeAssetsTest {
         assertTrue(script.contains("timeline.append"));
     }
 
+    @Test
+    public void bridgeScriptPolyfillsPromiseWithResolversBeforeElementBundleRuns() throws Exception {
+        File root = findRepoRoot();
+        String script = new String(
+                Files.readAllBytes(new File(root, "rich-client/src/main/assets/element/matrix-rich-runtime.js").toPath()),
+                StandardCharsets.UTF_8);
+
+        assertTrue(script.contains("Promise.withResolvers"));
+        assertTrue(script.contains("resolve: resolve"));
+        assertTrue(script.contains("reject: reject"));
+    }
+
+    @Test
+    public void bridgeScriptReportsLoginErrorsInsteadOfOpaqueBridgeCommandFailed() throws Exception {
+        File root = findRepoRoot();
+        String script = new String(
+                Files.readAllBytes(new File(root, "rich-client/src/main/assets/element/matrix-rich-runtime.js").toPath()),
+                StandardCharsets.UTF_8);
+
+        assertTrue(script.contains("function describeError"));
+        assertTrue(script.contains("Login failed: "));
+        assertTrue(script.contains("login_failed"));
+    }
+
     private File findRepoRoot() {
         File current = new File(System.getProperty("user.dir")).getAbsoluteFile();
         while (current != null) {
