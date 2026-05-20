@@ -110,6 +110,27 @@
         return value.replace(/\/+$/, "");
     }
 
+    async function resolveHomeserverBaseUrl(url) {
+        var endpoint = normalizeHomeserver(url);
+        try {
+            var response = await fetch(endpoint + "/config.json", {
+                credentials: "omit"
+            });
+            if (response && response.ok) {
+                var config = await response.json();
+                var homeserver = config
+                    && config.default_server_config
+                    && config.default_server_config["m.homeserver"];
+                if (homeserver && homeserver.base_url) {
+                    return normalizeHomeserver(homeserver.base_url);
+                }
+            }
+        } catch (error) {
+            // Not every homeserver URL is an Element Web deployment; fall back to the entered base URL.
+        }
+        return endpoint;
+    }
+
     function getMatrixRequire() {
         if (state.require) {
             return Promise.resolve(state.require);
@@ -181,7 +202,7 @@
 
     async function loginPassword(payload) {
         var matrix = await ensureMatrix();
-        var homeserver = normalizeHomeserver(payload.homeserver);
+        var homeserver = await resolveHomeserverBaseUrl(payload.homeserver);
         var username = text(payload.username).trim();
         var password = text(payload.password);
         if (!username || !password) {

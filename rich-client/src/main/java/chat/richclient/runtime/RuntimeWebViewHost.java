@@ -16,15 +16,13 @@ import chat.richclient.bridge.RuntimeBridge;
 public final class RuntimeWebViewHost {
     private final Context context;
     private final WebView webView;
-    private final WebViewAssetLoader assetLoader;
+    private WebViewAssetLoader assetLoader;
+    private String currentRuntimeAuthority = "";
+    private String currentRuntimeEntryUrl = "";
 
     @SuppressLint("SetJavaScriptEnabled")
     public RuntimeWebViewHost(Context context, RuntimeBridge bridge) {
         this.context = context;
-        assetLoader = new WebViewAssetLoader.Builder()
-                .setDomain(RuntimeConfig.ASSET_DOMAIN)
-                .addPathHandler("/", new WebViewAssetLoader.AssetsPathHandler(context))
-                .build();
 
         webView = new WebView(context);
         WebSettings settings = webView.getSettings();
@@ -43,22 +41,49 @@ public final class RuntimeWebViewHost {
     }
 
     public void loadRuntime() {
-        webView.loadUrl(RuntimeConfig.ELEMENT_ENTRY_URL);
+        loadRuntimeForAuthority(RuntimeConfig.DEFAULT_ASSET_DOMAIN);
+    }
+
+    public boolean loadRuntimeForHomeserver(String homeserverUrl) {
+        return loadRuntimeForAuthority(RuntimeConfig.runtimeAuthorityForHomeserver(homeserverUrl));
+    }
+
+    public boolean hasLoadedRuntime() {
+        return !currentRuntimeEntryUrl.isEmpty();
     }
 
     public void send(BridgeCommand command) {
         webView.evaluateJavascript(RuntimeConfig.commandDispatchScript(command), null);
     }
 
+    private boolean loadRuntimeForAuthority(String runtimeAuthority) {
+        String entryUrl = "https://" + runtimeAuthority
+                + RuntimeConfig.RUNTIME_PATH + RuntimeConfig.ELEMENT_ASSET_ROOT + "index.html";
+        if (entryUrl.equals(currentRuntimeEntryUrl)) {
+            return false;
+        }
+
+        assetLoader = new WebViewAssetLoader.Builder()
+                .setDomain(runtimeAuthority)
+                .addPathHandler(RuntimeConfig.RUNTIME_PATH, new WebViewAssetLoader.AssetsPathHandler(context))
+                .build();
+        currentRuntimeAuthority = runtimeAuthority;
+        currentRuntimeEntryUrl = entryUrl;
+        webView.loadUrl(entryUrl);
+        return true;
+    }
+
     private final class LockedRuntimeWebViewClient extends WebViewClient {
         @Override
         public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
-            return assetLoader.shouldInterceptRequest(request.getUrl());
+            WebViewAssetLoader loader = assetLoader;
+            return loader == null ? null : loader.shouldInterceptRequest(request.getUrl());
         }
 
         @Override
         public WebResourceResponse shouldInterceptRequest(WebView view, String url) {
-            return assetLoader.shouldInterceptRequest(Uri.parse(url));
+            WebViewAssetLoader loader = assetLoader;
+            return loader == null ? null : loader.shouldInterceptRequest(Uri.parse(url));
         }
 
         @Override
@@ -73,7 +98,7 @@ public final class RuntimeWebViewHost {
 
         private boolean handleNavigation(Uri uri) {
             String url = uri == null ? "" : uri.toString();
-            if (RuntimeConfig.isLocalRuntimeUrl(url)) {
+            if (RuntimeConfig.isLocalRuntimeUrl(url, currentRuntimeAuthority)) {
                 return false;
             }
             if (uri == null) {

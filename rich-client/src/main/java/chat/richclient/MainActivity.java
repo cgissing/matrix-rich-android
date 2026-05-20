@@ -65,6 +65,7 @@ public class MainActivity extends AppCompatActivity implements RuntimeBridge.Lis
     private EditText composerInput;
     private RecyclerView timelineRecyclerView;
     private BroadcastReceiver pushReceiver;
+    private JSONObject pendingLoginPayload;
     private boolean showingRoomList = true;
 
     @Override
@@ -82,7 +83,6 @@ public class MainActivity extends AppCompatActivity implements RuntimeBridge.Lis
         attachHiddenRuntime();
 
         registerPushReceiver();
-        runtimeHost.loadRuntime();
         renderState();
         registerUnifiedPush();
     }
@@ -191,8 +191,10 @@ public class MainActivity extends AppCompatActivity implements RuntimeBridge.Lis
             runtimeStatus.setText("Runtime error: " + runtimeState.runtimeError);
         } else if (runtimeState.runtimeReady) {
             runtimeStatus.setText("Runtime ready: " + runtimeState.runtimeName);
-        } else {
+        } else if (runtimeHost != null && runtimeHost.hasLoadedRuntime()) {
             runtimeStatus.setText("Runtime starting");
+        } else {
+            runtimeStatus.setText("Runtime waiting for homeserver");
         }
         authStatus.setText(runtimeState.loggedIn ? "Session: " + runtimeState.userId : "Not logged in");
         syncStatus.setText("Sync: " + runtimeState.syncState
@@ -278,11 +280,21 @@ public class MainActivity extends AppCompatActivity implements RuntimeBridge.Lis
 
     private void sendLogin() {
         try {
+            String homeserver = homeserverInput.getText().toString();
             JSONObject payload = new JSONObject()
-                    .put("homeserver", homeserverInput.getText().toString())
+                    .put("homeserver", homeserver)
                     .put("username", usernameInput.getText().toString())
                     .put("password", passwordInput.getText().toString());
-            runtimeHost.send(new BridgeCommand("auth.loginPassword", payload));
+            pendingLoginPayload = payload;
+            boolean reloaded = runtimeHost.loadRuntimeForHomeserver(homeserver);
+            if (reloaded) {
+                runtimeState = new RuntimeState();
+                renderState();
+                return;
+            }
+            sendPendingLoginIfRuntimeReady();
+        } catch (IllegalArgumentException failure) {
+            onBridgeError(failure.getMessage());
         } catch (JSONException failure) {
             onBridgeError("Unable to create login command");
         }
@@ -362,6 +374,9 @@ public class MainActivity extends AppCompatActivity implements RuntimeBridge.Lis
     public void onBridgeEvent(BridgeEvent event) {
         runtimeState = runtimeState.reduce(event);
         renderState();
+        if ("runtime.ready".equals(event.type)) {
+            sendPendingLoginIfRuntimeReady();
+        }
         if ("auth.state".equals(event.type) && runtimeState.loggedIn) {
             registerUnifiedPush();
             sendPushEndpointIfAvailable();
@@ -420,6 +435,15 @@ public class MainActivity extends AppCompatActivity implements RuntimeBridge.Lis
 
     private void requestRoomsSnapshot() {
         runtimeHost.send(new BridgeCommand("rooms.subscribe", new JSONObject()));
+    }
+
+    private void sendPendingLoginIfRuntimeReady() {
+        if (pendingLoginPayload == null || !runtimeState.runtimeReady) {
+            return;
+        }
+        JSONObject payload = pendingLoginPayload;
+        pendingLoginPayload = null;
+        runtimeHost.send(new BridgeCommand("auth.loginPassword", payload));
     }
 
     private void registerPushReceiver() {

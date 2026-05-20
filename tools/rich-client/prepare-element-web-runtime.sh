@@ -32,6 +32,7 @@ cat > "${asset_dir}/config.json" <<'JSON'
         }
     },
     "disable_custom_urls": false,
+    "disable_guests": true,
     "default_theme": "light",
     "setting_defaults": {
         "UIFeature.registration": false

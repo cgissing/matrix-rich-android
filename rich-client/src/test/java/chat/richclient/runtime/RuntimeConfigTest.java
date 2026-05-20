@@ -10,17 +10,37 @@ import org.junit.Test;
 
 public class RuntimeConfigTest {
     @Test
-    public void loadsElementRuntimeFromHttpsAppAssetsOrigin() {
-        assertEquals("https://appassets.androidplatform.net/element/index.html", RuntimeConfig.ELEMENT_ENTRY_URL);
-        assertTrue(RuntimeConfig.isLocalRuntimeUrl(RuntimeConfig.ELEMENT_ENTRY_URL));
-        assertTrue(RuntimeConfig.isLocalRuntimeUrl("https://appassets.androidplatform.net/element/bundles/app.js"));
+    public void derivesSameOriginRuntimeUrlFromPathMountedHomeserver() {
+        String entryUrl = RuntimeConfig.runtimeEntryUrlForHomeserver("https://matrix.example.org/_h314/");
+
+        assertEquals("https://matrix.example.org/_matrix_rich_runtime/element/index.html", entryUrl);
+        assertEquals("matrix.example.org", RuntimeConfig.runtimeAuthorityForHomeserver("https://matrix.example.org/_h314/"));
+        assertTrue(RuntimeConfig.isLocalRuntimeUrl(entryUrl, "matrix.example.org"));
+        assertTrue(RuntimeConfig.isLocalRuntimeUrl(
+                "https://matrix.example.org/_matrix_rich_runtime/element/bundles/app.js",
+                "matrix.example.org"));
+        assertFalse(RuntimeConfig.isLocalRuntimeUrl(
+                "https://matrix.example.org/_h314/_matrix/client/v3/login",
+                "matrix.example.org"));
+    }
+
+    @Test
+    public void prefixesMissingSchemeAndPreservesExplicitPortInRuntimeOrigin() {
+        assertEquals(
+                "example.org:8448",
+                RuntimeConfig.runtimeAuthorityForHomeserver("example.org:8448/matrix/"));
+        assertEquals(
+                "https://example.org:8448/_matrix_rich_runtime/element/index.html",
+                RuntimeConfig.runtimeEntryUrlForHomeserver("example.org:8448/matrix/"));
     }
 
     @Test
     public void rejectsExternalNavigationFromHiddenRuntime() {
-        assertFalse(RuntimeConfig.isLocalRuntimeUrl("https://app.element.io/"));
-        assertFalse(RuntimeConfig.isLocalRuntimeUrl("https://example.org/element/index.html"));
-        assertFalse(RuntimeConfig.isLocalRuntimeUrl("file:///android_asset/element/index.html"));
+        assertFalse(RuntimeConfig.isLocalRuntimeUrl("https://app.element.io/", "matrix.example.org"));
+        assertFalse(RuntimeConfig.isLocalRuntimeUrl(
+                "https://example.org/_matrix_rich_runtime/element/index.html",
+                "matrix.example.org"));
+        assertFalse(RuntimeConfig.isLocalRuntimeUrl("file:///android_asset/element/index.html", "matrix.example.org"));
     }
 
     @Test

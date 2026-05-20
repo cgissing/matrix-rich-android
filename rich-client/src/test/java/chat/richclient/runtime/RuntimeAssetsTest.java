@@ -63,6 +63,20 @@ public class RuntimeAssetsTest {
         assertTrue(script.contains("login_failed"));
     }
 
+    @Test
+    public void bridgeScriptResolvesElementWebEndpointConfigBeforePasswordLogin() throws Exception {
+        File root = findRepoRoot();
+        String script = new String(
+                Files.readAllBytes(new File(root, "rich-client/src/main/assets/element/matrix-rich-runtime.js").toPath()),
+                StandardCharsets.UTF_8);
+
+        assertTrue(script.contains("function resolveHomeserverBaseUrl"));
+        assertTrue(script.contains("/config.json"));
+        assertTrue(script.contains("default_server_config"));
+        assertTrue(script.contains("\"m.homeserver\""));
+        assertTrue(script.contains("var homeserver = await resolveHomeserverBaseUrl(payload.homeserver);"));
+    }
+
     private File findRepoRoot() {
         File current = new File(System.getProperty("user.dir")).getAbsoluteFile();
         while (current != null) {
