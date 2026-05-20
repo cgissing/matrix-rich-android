@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.TextWatcher;
@@ -38,6 +39,10 @@ import org.json.JSONObject;
 import org.unifiedpush.android.connector.UnifiedPush;
 
 public class MainActivity extends AppCompatActivity implements RuntimeBridge.Listener {
+    private static final String PREFS_NAME = "matrix_rich";
+    private static final String PREF_HOMESERVER = "homeserver";
+    private static final String PREF_USERNAME = "username";
+
     private RuntimeState runtimeState = new RuntimeState();
     private RuntimeWebViewHost runtimeHost;
     private RoomListAdapter roomListAdapter;
@@ -70,6 +75,7 @@ public class MainActivity extends AppCompatActivity implements RuntimeBridge.Lis
     private RecyclerView timelineRecyclerView;
     private BroadcastReceiver pushReceiver;
     private JSONObject pendingLoginPayload;
+    private boolean pendingSessionRestore = false;
     private boolean showingRoomList = true;
     private boolean roomListCollapsed = false;
 
@@ -85,11 +91,13 @@ public class MainActivity extends AppCompatActivity implements RuntimeBridge.Lis
         bindViews();
         configureLists(markdownRenderer);
         configureActions();
+        loadSavedLoginHints();
         attachHiddenRuntime();
 
         registerPushReceiver();
         renderState();
         registerUnifiedPush();
+        requestSessionRestore();
     }
 
     @Override
@@ -302,6 +310,8 @@ public class MainActivity extends AppCompatActivity implements RuntimeBridge.Lis
     private void sendLogin() {
         try {
             String homeserver = homeserverInput.getText().toString();
+            pendingSessionRestore = false;
+            saveLoginHints(homeserver, usernameInput.getText().toString());
             JSONObject payload = new JSONObject()
                     .put("homeserver", homeserver)
                     .put("username", usernameInput.getText().toString())
@@ -411,6 +421,7 @@ public class MainActivity extends AppCompatActivity implements RuntimeBridge.Lis
         renderState();
         if ("runtime.ready".equals(event.type)) {
             sendPendingLoginIfRuntimeReady();
+            sendPendingSessionRestoreIfRuntimeReady();
         }
         if ("auth.state".equals(event.type) && runtimeState.loggedIn) {
             registerUnifiedPush();
@@ -472,6 +483,23 @@ public class MainActivity extends AppCompatActivity implements RuntimeBridge.Lis
         runtimeHost.send(new BridgeCommand("rooms.subscribe", new JSONObject()));
     }
 
+    private void requestSessionRestore() {
+        String homeserver = homeserverInput.getText().toString().trim();
+        if (homeserver.isEmpty()) {
+            return;
+        }
+        try {
+            pendingSessionRestore = true;
+            boolean reloaded = runtimeHost.loadRuntimeForHomeserver(homeserver);
+            if (!reloaded) {
+                sendPendingSessionRestoreIfRuntimeReady();
+            }
+        } catch (IllegalArgumentException failure) {
+            pendingSessionRestore = false;
+            onBridgeError(failure.getMessage());
+        }
+    }
+
     private void sendPendingLoginIfRuntimeReady() {
         if (pendingLoginPayload == null || !isMatrixRuntimeReady()) {
             return;
@@ -481,8 +509,36 @@ public class MainActivity extends AppCompatActivity implements RuntimeBridge.Lis
         runtimeHost.send(new BridgeCommand("auth.loginPassword", payload));
     }
 
+    private void sendPendingSessionRestoreIfRuntimeReady() {
+        if (!pendingSessionRestore || pendingLoginPayload != null || !isMatrixRuntimeReady()) {
+            return;
+        }
+        pendingSessionRestore = false;
+        try {
+            JSONObject payload = new JSONObject()
+                    .put("homeserver", homeserverInput.getText().toString());
+            runtimeHost.send(new BridgeCommand("auth.restore", payload));
+        } catch (JSONException failure) {
+            onBridgeError("Unable to restore stored session");
+        }
+    }
+
     private boolean isMatrixRuntimeReady() {
         return runtimeState.runtimeReady && runtimeState.runtimeName.contains("matrix-js-sdk");
+    }
+
+    private void loadSavedLoginHints() {
+        SharedPreferences preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        homeserverInput.setText(preferences.getString(PREF_HOMESERVER, ""));
+        usernameInput.setText(preferences.getString(PREF_USERNAME, ""));
+    }
+
+    private void saveLoginHints(String homeserver, String username) {
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .edit()
+                .putString(PREF_HOMESERVER, homeserver == null ? "" : homeserver.trim())
+                .putString(PREF_USERNAME, username == null ? "" : username.trim())
+                .apply();
     }
 
     private void registerPushReceiver() {

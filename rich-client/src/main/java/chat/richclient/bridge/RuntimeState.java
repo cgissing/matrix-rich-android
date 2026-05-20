@@ -111,10 +111,15 @@ public final class RuntimeState {
                     .build();
         }
         if ("auth.state".equals(event.type)) {
-            return copy()
-                    .loggedIn(event.payload.optBoolean("loggedIn", loggedIn))
-                    .userId(event.payload.optString("userId", userId))
-                    .build();
+            boolean nextLoggedIn = event.payload.optBoolean("loggedIn", loggedIn);
+            String status = event.payload.optString("status", "");
+            Builder builder = copy()
+                    .loggedIn(nextLoggedIn)
+                    .userId(event.payload.optString("userId", userId));
+            if (nextLoggedIn || "logging_in".equals(status) || "restoring".equals(status)) {
+                builder.runtimeError("");
+            }
+            return builder.build();
         }
         if ("sync.state".equals(event.type)) {
             return copy()

@@ -27,6 +27,18 @@ public class RuntimeStateTest {
     }
 
     @Test
+    public void clearsStaleRuntimeErrorWhenLoginStartsOrSucceeds() {
+        RuntimeState failed = new RuntimeState()
+                .reduce(BridgeEvent.fromJson("{\"type\":\"runtime.error\",\"payload\":{\"message\":\"Login failed\"}}"));
+
+        RuntimeState loggingIn = failed.reduce(BridgeEvent.fromJson("{\"type\":\"auth.state\",\"payload\":{\"loggedIn\":false,\"status\":\"logging_in\"}}"));
+        RuntimeState loggedIn = failed.reduce(BridgeEvent.fromJson("{\"type\":\"auth.state\",\"payload\":{\"loggedIn\":true,\"userId\":\"@alice:example.org\"}}"));
+
+        assertEquals("", loggingIn.runtimeError);
+        assertEquals("", loggedIn.runtimeError);
+    }
+
+    @Test
     public void recordsRoomListAndTimelineSnapshots() {
         RuntimeState state = new RuntimeState();
 

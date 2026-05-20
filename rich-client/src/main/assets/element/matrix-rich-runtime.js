@@ -32,9 +32,11 @@
         secretStorageKey: null,
         started: false
     };
+    var SESSION_STORAGE_KEY = "matrix-rich.session.v1";
 
     var COMMANDS = [
         "auth.loginPassword",
+        "auth.restore",
         "auth.logout",
         "rooms.subscribe",
         "rooms.open",
@@ -121,6 +123,55 @@
             value = "https://" + value;
         }
         return value.replace(/\/+$/, "");
+    }
+
+    function saveSession(session) {
+        try {
+            var value = {
+                homeserver: text(session.homeserver || session.baseUrl),
+                baseUrl: normalizeHomeserver(session.baseUrl || session.homeserver),
+                accessToken: text(session.accessToken),
+                userId: text(session.userId),
+                deviceId: text(session.deviceId)
+            };
+            if (!value.baseUrl || !value.accessToken || !value.userId || !value.deviceId) {
+                return;
+            }
+            window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(value));
+        } catch (error) {
+            postError("Unable to save Matrix session", error);
+        }
+    }
+
+    function readStoredSession() {
+        try {
+            var raw = window.localStorage.getItem(SESSION_STORAGE_KEY);
+            if (!raw) {
+                return null;
+            }
+            var value = JSON.parse(raw);
+            var session = {
+                homeserver: text(value.homeserver || value.baseUrl),
+                baseUrl: normalizeHomeserver(value.baseUrl || value.homeserver),
+                accessToken: text(value.accessToken),
+                userId: text(value.userId),
+                deviceId: text(value.deviceId)
+            };
+            if (!session.baseUrl || !session.accessToken || !session.userId || !session.deviceId) {
+                return null;
+            }
+            return session;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    function clearStoredSession() {
+        try {
+            window.localStorage.removeItem(SESSION_STORAGE_KEY);
+        } catch (error) {
+            // localStorage may be unavailable if WebView data is damaged; ignore cleanup failure.
+        }
     }
 
     async function resolveHomeserverBaseUrl(url) {
@@ -262,6 +313,77 @@
         return client.crypto || null;
     }
 
+    function stopCurrentClient() {
+        if (state.client && typeof state.client.stopClient === "function") {
+            try {
+                state.client.stopClient();
+            } catch (error) {
+                // The next authenticated client replaces this one even if stopping reports a stale sync error.
+            }
+        }
+        state.client = null;
+        state.started = false;
+        state.currentRoomId = "";
+        state.decryptionListeners = {};
+        state.pendingSecretStorageKeys = null;
+        state.pendingSecretStorageName = "";
+        state.secretStorageKey = null;
+    }
+
+    async function startAuthenticatedClient(matrix, session, reason) {
+        stopCurrentClient();
+        var client = matrix.createClient({
+            baseUrl: session.baseUrl,
+            accessToken: session.accessToken,
+            userId: session.userId,
+            deviceId: session.deviceId,
+            cryptoCallbacks: makeCryptoCallbacks(),
+            timelineSupport: true,
+            useAuthorizationHeader: true
+        });
+        state.client = client;
+        attachClient(client);
+
+        if (reason === "restore" && typeof client.whoami === "function") {
+            try {
+                await client.whoami();
+            } catch (error) {
+                clearStoredSession();
+                throw new Error("Stored session expired: " + describeError(error));
+            }
+        }
+
+        if (typeof client.initRustCrypto === "function") {
+            try {
+                postCryptoState("initializing", "initializing E2EE");
+                await client.initRustCrypto();
+                postCryptoState("initialized", "E2EE initialized");
+            } catch (error) {
+                postError("E2EE crypto initialization failed", error);
+                postCryptoState("error", "E2EE initialization failed");
+            }
+        }
+        loadBackupFromSecretStorage(reason).catch(function (error) {
+            if (describeError(error).indexOf("getSecretStorageKey") < 0) {
+                postCryptoState("backup_unavailable", "key backup unavailable", {
+                    error: describeError(error)
+                });
+            }
+        });
+        state.started = true;
+        await client.startClient({
+            initialSyncLimit: 30,
+            lazyLoadMembers: true
+        });
+        postEvent("auth.state", {
+            loggedIn: true,
+            userId: session.userId,
+            deviceId: session.deviceId,
+            homeserver: session.baseUrl,
+            restored: reason === "restore"
+        });
+    }
+
     async function loginPassword(payload) {
         var matrix = await ensureMatrix();
         var homeserver = await resolveHomeserverBaseUrl(payload.homeserver);
@@ -286,46 +408,31 @@
             initial_device_display_name: "Matrix Rich Android"
         };
         var result = await loginClient.loginRequest(loginPayload);
-
-        var client = matrix.createClient({
+        var session = {
+            homeserver: text(payload.homeserver),
             baseUrl: homeserver,
             accessToken: result.access_token,
             userId: result.user_id,
-            deviceId: result.device_id,
-            cryptoCallbacks: makeCryptoCallbacks(),
-            timelineSupport: true,
-            useAuthorizationHeader: true
-        });
-        state.client = client;
-        attachClient(client);
-        if (typeof client.initRustCrypto === "function") {
-            try {
-                postCryptoState("initializing", "initializing E2EE");
-                await client.initRustCrypto();
-                postCryptoState("initialized", "E2EE initialized");
-            } catch (error) {
-                postError("E2EE crypto initialization failed", error);
-                postCryptoState("error", "E2EE initialization failed");
-            }
+            deviceId: result.device_id
+        };
+        saveSession(session);
+        await startAuthenticatedClient(matrix, session, "login");
+    }
+
+    async function restoreSession(payload) {
+        var matrix = await ensureMatrix();
+        var session = readStoredSession();
+        if (!session) {
+            postEvent("auth.state", { loggedIn: false, userId: "", status: "no_stored_session" });
+            return;
         }
-        loadBackupFromSecretStorage("login").catch(function (error) {
-            if (describeError(error).indexOf("getSecretStorageKey") < 0) {
-                postCryptoState("backup_unavailable", "key backup unavailable", {
-                    error: describeError(error)
-                });
-            }
-        });
-        state.started = true;
-        await client.startClient({
-            initialSyncLimit: 30,
-            lazyLoadMembers: true
-        });
-        postEvent("auth.state", {
-            loggedIn: true,
-            userId: result.user_id,
-            deviceId: result.device_id,
-            homeserver: homeserver
-        });
+        if (payload.homeserver) {
+            session.homeserver = text(payload.homeserver);
+            session.baseUrl = await resolveHomeserverBaseUrl(payload.homeserver);
+        }
+        postEvent("auth.state", { loggedIn: false, userId: "", status: "restoring" });
+        postEvent("sync.state", { state: "restore" });
+        await startAuthenticatedClient(matrix, session, "restore");
     }
 
     async function logout() {
@@ -335,6 +442,7 @@
         var client = state.client;
         state.client = null;
         state.started = false;
+        clearStoredSession();
         try {
             client.stopClient();
             await client.logout();
@@ -732,6 +840,9 @@
         switch (command.type) {
             case "auth.loginPassword":
                 await loginPassword(payload);
+                break;
+            case "auth.restore":
+                await restoreSession(payload);
                 break;
             case "auth.logout":
                 await logout();

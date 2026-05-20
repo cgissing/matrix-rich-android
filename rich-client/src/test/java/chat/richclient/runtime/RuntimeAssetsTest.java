@@ -30,6 +30,7 @@ public class RuntimeAssetsTest {
                 StandardCharsets.UTF_8);
 
         assertTrue(script.contains("auth.loginPassword"));
+        assertTrue(script.contains("auth.restore"));
         assertTrue(script.contains("messages.sendText"));
         assertTrue(script.contains("reactions.send"));
         assertTrue(script.contains("verification.action"));
@@ -93,6 +94,21 @@ public class RuntimeAssetsTest {
         assertTrue(script.contains("MatrixEventEvent"));
         assertTrue(script.contains("Decrypted"));
         assertTrue(script.contains("emitTimelineSnapshot(roomId)"));
+    }
+
+    @Test
+    public void bridgeScriptPersistsAndRestoresMatrixSessionDeviceForE2eeContinuity() throws Exception {
+        File root = findRepoRoot();
+        String script = new String(
+                Files.readAllBytes(new File(root, "rich-client/src/main/assets/element/matrix-rich-runtime.js").toPath()),
+                StandardCharsets.UTF_8);
+
+        assertTrue(script.contains("SESSION_STORAGE_KEY"));
+        assertTrue(script.contains("saveSession"));
+        assertTrue(script.contains("readStoredSession"));
+        assertTrue(script.contains("restoreSession"));
+        assertTrue(script.contains("accessToken: session.accessToken"));
+        assertTrue(script.contains("deviceId: session.deviceId"));
     }
 
     private File findRepoRoot() {

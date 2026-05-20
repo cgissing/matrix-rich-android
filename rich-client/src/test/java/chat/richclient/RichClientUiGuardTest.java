@@ -61,6 +61,18 @@ public class RichClientUiGuardTest {
         assertTrue(activity.contains("pendingLoginPayload == null || !isMatrixRuntimeReady()"));
     }
 
+    @Test
+    public void nativeShellRestoresStoredRuntimeSessionWithoutAskingForPasswordAgain() throws Exception {
+        File root = findRepoRoot();
+        String activity = read(new File(root, "rich-client/src/main/java/chat/richclient/MainActivity.java"));
+
+        assertTrue(activity.contains("getSharedPreferences"));
+        assertTrue(activity.contains("loadSavedLoginHints"));
+        assertTrue(activity.contains("requestSessionRestore"));
+        assertTrue(activity.contains("auth.restore"));
+        assertFalse(activity.contains("putString(PREF_PASSWORD"));
+    }
+
     private void assertLayoutContains(File root, String fileName, String firstNeedle, String secondNeedle) throws Exception {
         File layout = new File(root, "rich-client/src/main/res/layout/" + fileName);
         assertTrue(fileName + " must exist", layout.isFile());
