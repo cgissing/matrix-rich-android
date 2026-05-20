@@ -34,9 +34,11 @@ public class RuntimeAssetsTest {
         assertTrue(script.contains("reactions.send"));
         assertTrue(script.contains("verification.action"));
         assertTrue(script.contains("push.register"));
+        assertTrue(script.contains("crypto.provideRecoveryKey"));
         assertTrue(script.contains("runtime.ready"));
         assertTrue(script.contains("rooms.snapshot"));
         assertTrue(script.contains("timeline.append"));
+        assertTrue(script.contains("crypto.state"));
     }
 
     @Test
@@ -75,6 +77,22 @@ public class RuntimeAssetsTest {
         assertTrue(script.contains("default_server_config"));
         assertTrue(script.contains("\"m.homeserver\""));
         assertTrue(script.contains("var homeserver = await resolveHomeserverBaseUrl(payload.homeserver);"));
+    }
+
+    @Test
+    public void bridgeScriptRequestsSecretStorageRecoveryAndRefreshesAfterDecrypt() throws Exception {
+        File root = findRepoRoot();
+        String script = new String(
+                Files.readAllBytes(new File(root, "rich-client/src/main/assets/element/matrix-rich-runtime.js").toPath()),
+                StandardCharsets.UTF_8);
+
+        assertTrue(script.contains("getSecretStorageKey"));
+        assertTrue(script.contains("decodeRecoveryKey"));
+        assertTrue(script.contains("deriveRecoveryKeyFromPassphrase"));
+        assertTrue(script.contains("loadSessionBackupPrivateKeyFromSecretStorage"));
+        assertTrue(script.contains("MatrixEventEvent"));
+        assertTrue(script.contains("Decrypted"));
+        assertTrue(script.contains("emitTimelineSnapshot(roomId)"));
     }
 
     private File findRepoRoot() {

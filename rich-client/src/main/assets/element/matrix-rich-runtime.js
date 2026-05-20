@@ -24,8 +24,12 @@
     var state = {
         client: null,
         currentRoomId: "",
+        decryptionListeners: {},
         matrix: null,
+        pendingSecretStorageKeys: null,
+        pendingSecretStorageName: "",
         require: null,
+        secretStorageKey: null,
         started: false
     };
 
@@ -39,6 +43,7 @@
         "typing.set",
         "reactions.send",
         "verification.action",
+        "crypto.provideRecoveryKey",
         "push.register",
         "sync.once"
     ];
@@ -54,6 +59,7 @@
         "typing.update",
         "reactions.update",
         "verification.update",
+        "crypto.state",
         "push.registrationState"
     ];
 
@@ -69,6 +75,13 @@
             message: message,
             detail: error && (error.stack || error.message || String(error))
         });
+    }
+
+    function postCryptoState(stateName, status, extra) {
+        var payload = extra || {};
+        payload.state = stateName;
+        payload.status = status || stateName;
+        postEvent("crypto.state", payload);
     }
 
     function describeError(error) {
@@ -187,6 +200,7 @@
             if (!room || toStartOfTimeline) {
                 return;
             }
+            watchEventDecryption(event, room);
             postEvent("timeline.append", {
                 roomId: room.roomId,
                 event: serializeEvent(event, room)
@@ -198,6 +212,54 @@
             var roomId = member && member.roomId ? member.roomId : state.currentRoomId;
             emitTyping(roomId);
         });
+    }
+
+    function makeCryptoCallbacks() {
+        return {
+            getSecretStorageKey: async function (opts, name) {
+                var keys = opts && opts.keys ? opts.keys : {};
+                var cached = await matchingCachedSecretStorageKey(keys);
+                if (cached) {
+                    return cached;
+                }
+                state.pendingSecretStorageKeys = keys;
+                state.pendingSecretStorageName = name || "";
+                postCryptoState("recovery_required", "recovery key needed", {
+                    recoveryRequired: true,
+                    secretName: state.pendingSecretStorageName,
+                    keyIds: Object.keys(keys)
+                });
+                return null;
+            },
+            cacheSecretStorageKey: function (keyId, keyInfo, key) {
+                state.secretStorageKey = {
+                    keyId: keyId,
+                    privateKey: key
+                };
+                postCryptoState("unlocked", "recovery key cached", {
+                    recoveryRequired: false,
+                    secretName: state.pendingSecretStorageName || ""
+                });
+            }
+        };
+    }
+
+    async function matchingCachedSecretStorageKey(keys) {
+        if (!state.secretStorageKey || !keys || !keys[state.secretStorageKey.keyId]) {
+            return null;
+        }
+        return [state.secretStorageKey.keyId, state.secretStorageKey.privateKey];
+    }
+
+    function cryptoApi() {
+        var client = state.client;
+        if (!client) {
+            return null;
+        }
+        if (typeof client.getCrypto === "function") {
+            return client.getCrypto();
+        }
+        return client.crypto || null;
     }
 
     async function loginPassword(payload) {
@@ -230,6 +292,7 @@
             accessToken: result.access_token,
             userId: result.user_id,
             deviceId: result.device_id,
+            cryptoCallbacks: makeCryptoCallbacks(),
             timelineSupport: true,
             useAuthorizationHeader: true
         });
@@ -237,11 +300,21 @@
         attachClient(client);
         if (typeof client.initRustCrypto === "function") {
             try {
+                postCryptoState("initializing", "initializing E2EE");
                 await client.initRustCrypto();
+                postCryptoState("initialized", "E2EE initialized");
             } catch (error) {
                 postError("E2EE crypto initialization failed", error);
+                postCryptoState("error", "E2EE initialization failed");
             }
         }
+        loadBackupFromSecretStorage("login").catch(function (error) {
+            if (describeError(error).indexOf("getSecretStorageKey") < 0) {
+                postCryptoState("backup_unavailable", "key backup unavailable", {
+                    error: describeError(error)
+                });
+            }
+        });
         state.started = true;
         await client.startClient({
             initialSyncLimit: 30,
@@ -319,6 +392,7 @@
         }
         state.currentRoomId = roomId;
         var events = room.getLiveTimeline().getEvents().map(function (event) {
+            watchEventDecryption(event, room);
             return serializeEvent(event, room);
         }).filter(function (event) {
             return event.body || event.eventId;
@@ -365,6 +439,46 @@
             return event.getContent() || {};
         }
         return event && event.event && event.event.content ? event.event.content : {};
+    }
+
+    function watchEventDecryption(event, room) {
+        if (!event || typeof event.on !== "function") {
+            return;
+        }
+        var eventId = typeof event.getId === "function" ? event.getId() : "";
+        if (!eventId || state.decryptionListeners[eventId]) {
+            return;
+        }
+        state.decryptionListeners[eventId] = true;
+        var matrix = state.matrix || {};
+        var MatrixEventEvent = matrix.MatrixEventEvent || {};
+        var decryptedEventName = MatrixEventEvent.Decrypted || "Event.decrypted";
+        event.on(decryptedEventName, function (decryptedEvent, error) {
+            var target = decryptedEvent || event;
+            var roomId = "";
+            if (target && typeof target.getRoomId === "function") {
+                roomId = target.getRoomId();
+            }
+            if (!roomId && room && room.roomId) {
+                roomId = room.roomId;
+            }
+            if (error) {
+                postCryptoState("decrypting", "waiting for room key", {
+                    roomId: roomId,
+                    eventId: eventId
+                });
+            }
+            if (roomId) {
+                emitTimelineSnapshot(roomId);
+            }
+            if (state.client) {
+                var refreshedRoom = roomId ? state.client.getRoom(roomId) : null;
+                if (refreshedRoom) {
+                    emitReactionsForRoom(refreshedRoom);
+                }
+                emitRoomsSnapshot();
+            }
+        });
     }
 
     function emitTyping(roomId) {
@@ -454,6 +568,126 @@
         });
     }
 
+    async function provideRecoveryKey(payload) {
+        var secret = text(payload.secret).trim();
+        if (!secret) {
+            return;
+        }
+        var keys = state.pendingSecretStorageKeys || {};
+        if (!Object.keys(keys).length && state.client && state.client.secretStorage) {
+            keys = await state.client.secretStorage.isStored("m.megolm_backup.v1") || {};
+        }
+        state.secretStorageKey = await resolveSecretStorageKey(secret, keys);
+        postCryptoState("unlocking", "unlocking E2EE history", {
+            recoveryRequired: false,
+            secretName: state.pendingSecretStorageName || "m.megolm_backup.v1"
+        });
+        await loadBackupFromSecretStorage("recovery_key");
+    }
+
+    async function resolveSecretStorageKey(secret, keys) {
+        var matrix = await ensureMatrix();
+        var recovery = matrix;
+        if (typeof recovery.decodeRecoveryKey !== "function" && state.require) {
+            recovery = state.require("../../node_modules/matrix-js-sdk/src/crypto-api/recovery-key.ts");
+        }
+
+        try {
+            if (typeof recovery.decodeRecoveryKey === "function") {
+                return await findMatchingSecretStorageKey(keys, recovery.decodeRecoveryKey(secret));
+            }
+        } catch (error) {
+            // It may be a security phrase rather than a recovery key.
+        }
+
+        var keyIds = Object.keys(keys);
+        for (var i = 0; i < keyIds.length; i += 1) {
+            var keyId = keyIds[i];
+            var keyInfo = keys[keyId] || {};
+            var passphrase = keyInfo.passphrase;
+            if (!passphrase || passphrase.algorithm !== "m.pbkdf2") {
+                continue;
+            }
+            var derived = await deriveRecoveryKeyFromPassphrase(
+                secret,
+                passphrase.salt,
+                passphrase.iterations,
+                passphrase.bits);
+            try {
+                return await findMatchingSecretStorageKey({ [keyId]: keyInfo }, derived);
+            } catch (error) {
+                // Try the next key.
+            }
+        }
+        throw new Error("Recovery key did not match secret storage");
+    }
+
+    async function deriveRecoveryKeyFromPassphrase(passphrase, salt, iterations, bits) {
+        if (!globalThis.crypto || !globalThis.crypto.subtle || typeof TextEncoder !== "function") {
+            throw new Error("Password-based recovery is not available in this WebView");
+        }
+        var key = await globalThis.crypto.subtle.importKey(
+            "raw",
+            new TextEncoder().encode(passphrase),
+            { name: "PBKDF2" },
+            false,
+            ["deriveBits"]);
+        var keyBits = await globalThis.crypto.subtle.deriveBits(
+            {
+                name: "PBKDF2",
+                salt: new TextEncoder().encode(salt),
+                iterations: iterations,
+                hash: "SHA-512"
+            },
+            key,
+            bits || 256);
+        return new Uint8Array(keyBits);
+    }
+
+    async function findMatchingSecretStorageKey(keys, privateKey) {
+        var keyIds = Object.keys(keys || {});
+        if (!keyIds.length) {
+            throw new Error("No secret storage key info is available");
+        }
+        for (var i = 0; i < keyIds.length; i += 1) {
+            var keyId = keyIds[i];
+            try {
+                if (state.client.secretStorage
+                        && typeof state.client.secretStorage.checkKey === "function"
+                        && await state.client.secretStorage.checkKey(privateKey, keys[keyId])) {
+                    return {
+                        keyId: keyId,
+                        privateKey: privateKey
+                    };
+                }
+            } catch (error) {
+                // Keep checking other advertised keys.
+            }
+        }
+        throw new Error("Recovery key did not match secret storage");
+    }
+
+    async function loadBackupFromSecretStorage(reason) {
+        var crypto = cryptoApi();
+        if (!crypto) {
+            postCryptoState("disabled", "E2EE unavailable");
+            return;
+        }
+        if (typeof crypto.loadSessionBackupPrivateKeyFromSecretStorage === "function") {
+            await crypto.loadSessionBackupPrivateKeyFromSecretStorage();
+        }
+        if (typeof crypto.checkKeyBackupAndEnable === "function") {
+            await crypto.checkKeyBackupAndEnable();
+        }
+        postCryptoState("ready", "E2EE ready", {
+            recoveryRequired: false,
+            reason: reason || ""
+        });
+        if (state.currentRoomId) {
+            emitTimelineSnapshot(state.currentRoomId);
+        }
+    }
+
     async function registerPush(payload) {
         var client = requireClient();
         var endpoint = text(payload.endpoint);
@@ -527,6 +761,9 @@
                     userId: text(payload.userId),
                     state: "native action requested: " + text(payload.action)
                 });
+                break;
+            case "crypto.provideRecoveryKey":
+                await provideRecoveryKey(payload);
                 break;
             case "push.register":
                 await registerPush(payload);

@@ -31,6 +31,36 @@ public class RichClientUiGuardTest {
         assertLayoutContains(root, "view_rich_composer_sc.xml", "composerEditText", "sendButton");
     }
 
+    @Test
+    public void roomListCanCollapseOnWideLayoutsWithoutLeavingWebUiBehind() throws Exception {
+        File root = findRepoRoot();
+        String activity = read(new File(root, "rich-client/src/main/java/chat/richclient/MainActivity.java"));
+
+        assertLayoutContains(root, "view_rich_room_toolbar_sc.xml", "roomSidebarToggleButton", "roomToolbarLeadingActions");
+        assertTrue(activity.contains("roomListCollapsed"));
+        assertTrue(activity.contains("roomSidebarToggleButton.setOnClickListener"));
+        assertTrue(activity.contains("roomListPane.setVisibility(roomListCollapsed ? View.GONE : View.VISIBLE)"));
+        assertFalse(activity.contains("WebView.loadUrl(\"https://app.element.io\")"));
+    }
+
+    @Test
+    public void e2eeRecoveryHasNativeControlsInsteadOfChatOrLogPrompts() throws Exception {
+        File root = findRepoRoot();
+
+        assertLayoutContains(root, "activity_rich_home.xml", "cryptoRecoveryPanel", "cryptoRecoveryInput");
+        assertLayoutContains(root, "activity_rich_home.xml", "cryptoStatus", "cryptoUnlockButton");
+    }
+
+    @Test
+    public void pendingPasswordLoginWaitsForMatrixJsSdkRuntimeNotBridgePreload() throws Exception {
+        File root = findRepoRoot();
+        String activity = read(new File(root, "rich-client/src/main/java/chat/richclient/MainActivity.java"));
+
+        assertTrue(activity.contains("isMatrixRuntimeReady"));
+        assertTrue(activity.contains("runtimeName.contains(\"matrix-js-sdk\")"));
+        assertTrue(activity.contains("pendingLoginPayload == null || !isMatrixRuntimeReady()"));
+    }
+
     private void assertLayoutContains(File root, String fileName, String firstNeedle, String secondNeedle) throws Exception {
         File layout = new File(root, "rich-client/src/main/res/layout/" + fileName);
         assertTrue(fileName + " must exist", layout.isFile());

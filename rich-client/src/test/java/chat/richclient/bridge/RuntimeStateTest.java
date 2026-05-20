@@ -72,4 +72,15 @@ public class RuntimeStateTest {
         assertFalse(state.pushRegistered);
         assertEquals("distributor missing", state.pushStatus);
     }
+
+    @Test
+    public void tracksCryptoRecoveryStateWithoutStoringRecoverySecret() {
+        RuntimeState state = new RuntimeState()
+                .reduce(BridgeEvent.fromJson("{\"type\":\"crypto.state\",\"payload\":{\"state\":\"recovery_required\",\"status\":\"Recovery key needed\",\"secretName\":\"m.megolm_backup.v1\"}}"));
+
+        assertEquals("recovery_required", state.cryptoState);
+        assertEquals("Recovery key needed", state.cryptoStatus);
+        assertEquals("m.megolm_backup.v1", state.cryptoSecretName);
+        assertTrue(state.cryptoRecoveryRequired);
+    }
 }

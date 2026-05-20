@@ -7,17 +7,34 @@
     android:background="@color/rich_surface"
     android:paddingEnd="12dp">
 
-    <ImageButton
-        android:id="@+id/roomToolbarBackButton"
-        android:layout_width="48dp"
-        android:layout_height="48dp"
-        android:background="?attr/selectableItemBackgroundBorderless"
-        android:contentDescription="Back"
-        android:src="@drawable/rich_ic_back"
-        android:visibility="gone"
+    <LinearLayout
+        android:id="@+id/roomToolbarLeadingActions"
+        android:layout_width="wrap_content"
+        android:layout_height="match_parent"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent" />
+        app:layout_constraintTop_toTopOf="parent">
+
+        <ImageButton
+            android:id="@+id/roomToolbarBackButton"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Back"
+            android:src="@drawable/rich_ic_back"
+            android:visibility="gone" />
+
+        <ImageButton
+            android:id="@+id/roomSidebarToggleButton"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Hide rooms"
+            android:src="@drawable/rich_ic_sidebar"
+            android:visibility="gone" />
+    </LinearLayout>
 
     <TextView
         android:id="@+id/roomToolbarAvatarImageView"
@@ -29,7 +46,7 @@
         android:textSize="14sp"
         android:textStyle="bold"
         app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintStart_toEndOf="@id/roomToolbarBackButton"
+        app:layout_constraintStart_toEndOf="@id/roomToolbarLeadingActions"
         app:layout_constraintTop_toTopOf="parent" />
 
     <ImageView

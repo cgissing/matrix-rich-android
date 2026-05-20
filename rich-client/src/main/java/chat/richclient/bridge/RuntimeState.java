@@ -25,6 +25,10 @@ public final class RuntimeState {
     public final boolean pushRegistered;
     public final String pushStatus;
     public final String pushEndpoint;
+    public final String cryptoState;
+    public final String cryptoStatus;
+    public final String cryptoSecretName;
+    public final boolean cryptoRecoveryRequired;
 
     public RuntimeState() {
         this(
@@ -43,7 +47,11 @@ public final class RuntimeState {
                 Collections.emptyList(),
                 false,
                 "not registered",
-                "");
+                "",
+                "idle",
+                "idle",
+                "",
+                false);
     }
 
     private RuntimeState(
@@ -62,7 +70,11 @@ public final class RuntimeState {
             List<VerificationSummary> verifications,
             boolean pushRegistered,
             String pushStatus,
-            String pushEndpoint) {
+            String pushEndpoint,
+            String cryptoState,
+            String cryptoStatus,
+            String cryptoSecretName,
+            boolean cryptoRecoveryRequired) {
         this.runtimeReady = runtimeReady;
         this.runtimeName = runtimeName;
         this.runtimeError = runtimeError;
@@ -79,6 +91,10 @@ public final class RuntimeState {
         this.pushRegistered = pushRegistered;
         this.pushStatus = pushStatus;
         this.pushEndpoint = pushEndpoint;
+        this.cryptoState = cryptoState;
+        this.cryptoStatus = cryptoStatus;
+        this.cryptoSecretName = cryptoSecretName;
+        this.cryptoRecoveryRequired = cryptoRecoveryRequired;
     }
 
     public RuntimeState reduce(BridgeEvent event) {
@@ -104,6 +120,17 @@ public final class RuntimeState {
             return copy()
                     .syncState(event.payload.optString("state", syncState))
                     .syncError(event.payload.optString("error", ""))
+                    .build();
+        }
+        if ("crypto.state".equals(event.type)) {
+            String nextCryptoState = event.payload.optString("state", cryptoState);
+            return copy()
+                    .cryptoState(nextCryptoState)
+                    .cryptoStatus(event.payload.optString("status", nextCryptoState))
+                    .cryptoSecretName(event.payload.optString("secretName", cryptoSecretName))
+                    .cryptoRecoveryRequired(event.payload.optBoolean(
+                            "recoveryRequired",
+                            "recovery_required".equals(nextCryptoState)))
                     .build();
         }
         if ("rooms.snapshot".equals(event.type)) {
@@ -378,6 +405,10 @@ public final class RuntimeState {
         private boolean pushRegistered;
         private String pushStatus;
         private String pushEndpoint;
+        private String cryptoState;
+        private String cryptoStatus;
+        private String cryptoSecretName;
+        private boolean cryptoRecoveryRequired;
 
         private Builder(RuntimeState state) {
             runtimeReady = state.runtimeReady;
@@ -396,6 +427,10 @@ public final class RuntimeState {
             pushRegistered = state.pushRegistered;
             pushStatus = state.pushStatus;
             pushEndpoint = state.pushEndpoint;
+            cryptoState = state.cryptoState;
+            cryptoStatus = state.cryptoStatus;
+            cryptoSecretName = state.cryptoSecretName;
+            cryptoRecoveryRequired = state.cryptoRecoveryRequired;
         }
 
         Builder runtimeReady(boolean value) {
@@ -478,6 +513,26 @@ public final class RuntimeState {
             return this;
         }
 
+        Builder cryptoState(String value) {
+            cryptoState = value;
+            return this;
+        }
+
+        Builder cryptoStatus(String value) {
+            cryptoStatus = value;
+            return this;
+        }
+
+        Builder cryptoSecretName(String value) {
+            cryptoSecretName = value;
+            return this;
+        }
+
+        Builder cryptoRecoveryRequired(boolean value) {
+            cryptoRecoveryRequired = value;
+            return this;
+        }
+
         RuntimeState build() {
             return new RuntimeState(
                     runtimeReady,
@@ -495,7 +550,11 @@ public final class RuntimeState {
                     verifications,
                     pushRegistered,
                     pushStatus,
-                    pushEndpoint);
+                    pushEndpoint,
+                    cryptoState,
+                    cryptoStatus,
+                    cryptoSecretName,
+                    cryptoRecoveryRequired);
         }
     }
 }

@@ -51,22 +51,27 @@ public class MainActivity extends AppCompatActivity implements RuntimeBridge.Lis
     private TextView authStatus;
     private TextView syncStatus;
     private TextView pushStatus;
+    private TextView cryptoStatus;
     private TextView roomListHeader;
     private TextView roomToolbarAvatar;
     private ImageView roomToolbarDecoration;
     private ImageButton roomToolbarBackButton;
+    private ImageButton roomSidebarToggleButton;
     private TextView roomToolbarTitle;
     private TextView roomToolbarSubtitle;
+    private LinearLayout cryptoRecoveryPanel;
     private LinearLayout verificationList;
     private TextView typingStatus;
     private EditText homeserverInput;
     private EditText usernameInput;
     private EditText passwordInput;
+    private EditText cryptoRecoveryInput;
     private EditText composerInput;
     private RecyclerView timelineRecyclerView;
     private BroadcastReceiver pushReceiver;
     private JSONObject pendingLoginPayload;
     private boolean showingRoomList = true;
+    private boolean roomListCollapsed = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -115,17 +120,21 @@ public class MainActivity extends AppCompatActivity implements RuntimeBridge.Lis
         authStatus = findViewById(R.id.authStatus);
         syncStatus = findViewById(R.id.syncStatus);
         pushStatus = findViewById(R.id.pushStatus);
+        cryptoStatus = findViewById(R.id.cryptoStatus);
         roomListHeader = findViewById(R.id.roomListHeader);
         roomToolbarAvatar = findViewById(R.id.roomToolbarAvatarImageView);
         roomToolbarDecoration = findViewById(R.id.roomToolbarDecorationImageView);
         roomToolbarBackButton = findViewById(R.id.roomToolbarBackButton);
+        roomSidebarToggleButton = findViewById(R.id.roomSidebarToggleButton);
         roomToolbarTitle = findViewById(R.id.roomToolbarTitleView);
         roomToolbarSubtitle = findViewById(R.id.roomToolbarSubtitleView);
+        cryptoRecoveryPanel = findViewById(R.id.cryptoRecoveryPanel);
         verificationList = findViewById(R.id.verificationList);
         typingStatus = findViewById(R.id.typingStatus);
         homeserverInput = findViewById(R.id.homeserverInput);
         usernameInput = findViewById(R.id.usernameInput);
         passwordInput = findViewById(R.id.passwordInput);
+        cryptoRecoveryInput = findViewById(R.id.cryptoRecoveryInput);
         composerInput = findViewById(R.id.composerEditText);
         timelineRecyclerView = findViewById(R.id.timelineRecyclerView);
     }
@@ -145,12 +154,18 @@ public class MainActivity extends AppCompatActivity implements RuntimeBridge.Lis
 
     private void configureActions() {
         MaterialButton loginButton = findViewById(R.id.loginButton);
+        MaterialButton cryptoUnlockButton = findViewById(R.id.cryptoUnlockButton);
         ImageButton sendButton = findViewById(R.id.sendButton);
 
         loginButton.setOnClickListener(view -> sendLogin());
+        cryptoUnlockButton.setOnClickListener(view -> sendCryptoRecoveryKey());
         sendButton.setOnClickListener(view -> sendComposerMessage());
         roomToolbarBackButton.setOnClickListener(view -> {
             showingRoomList = true;
+            renderPanes();
+        });
+        roomSidebarToggleButton.setOnClickListener(view -> {
+            roomListCollapsed = !roomListCollapsed;
             renderPanes();
         });
         composerInput.addTextChangedListener(new TextWatcher() {
@@ -200,6 +215,7 @@ public class MainActivity extends AppCompatActivity implements RuntimeBridge.Lis
         syncStatus.setText("Sync: " + runtimeState.syncState
                 + (runtimeState.syncError.isEmpty() ? "" : " / " + runtimeState.syncError));
         pushStatus.setText("Push: " + runtimeState.pushStatus);
+        cryptoStatus.setText("Crypto: " + runtimeState.cryptoStatus);
         typingStatus.setText(runtimeState.typingSummaryForSelectedRoom());
         roomListHeader.setText(runtimeState.rooms.isEmpty() ? "Rooms" : "Rooms (" + runtimeState.rooms.size() + ")");
     }
@@ -238,6 +254,8 @@ public class MainActivity extends AppCompatActivity implements RuntimeBridge.Lis
     private void renderPanes() {
         boolean hasSessionSurface = runtimeState.loggedIn || !runtimeState.rooms.isEmpty();
         loginPanel.setVisibility(runtimeState.loggedIn ? View.GONE : View.VISIBLE);
+        cryptoRecoveryPanel.setVisibility(
+                runtimeState.loggedIn && runtimeState.cryptoRecoveryRequired ? View.VISIBLE : View.GONE);
         chatContainer.setVisibility(hasSessionSurface ? View.VISIBLE : View.GONE);
         composerInput.setEnabled(!runtimeState.selectedRoomId.isEmpty());
 
@@ -254,6 +272,7 @@ public class MainActivity extends AppCompatActivity implements RuntimeBridge.Lis
             roomDetailPane.setVisibility(showingRoomList ? View.GONE : View.VISIBLE);
             masterDetailDivider.setVisibility(View.GONE);
             roomToolbarBackButton.setVisibility(showingRoomList ? View.GONE : View.VISIBLE);
+            roomSidebarToggleButton.setVisibility(View.GONE);
         } else {
             LinearLayout.LayoutParams roomParams = new LinearLayout.LayoutParams(
                     dp(320),
@@ -264,10 +283,12 @@ public class MainActivity extends AppCompatActivity implements RuntimeBridge.Lis
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     1F);
             roomDetailPane.setLayoutParams(detailParams);
-            roomListPane.setVisibility(View.VISIBLE);
+            roomListPane.setVisibility(roomListCollapsed ? View.GONE : View.VISIBLE);
             roomDetailPane.setVisibility(View.VISIBLE);
-            masterDetailDivider.setVisibility(View.VISIBLE);
+            masterDetailDivider.setVisibility(roomListCollapsed ? View.GONE : View.VISIBLE);
             roomToolbarBackButton.setVisibility(View.GONE);
+            roomSidebarToggleButton.setVisibility(View.VISIBLE);
+            roomSidebarToggleButton.setContentDescription(roomListCollapsed ? "Show rooms" : "Hide rooms");
         }
     }
 
@@ -325,6 +346,20 @@ public class MainActivity extends AppCompatActivity implements RuntimeBridge.Lis
             sendTyping(false);
         } catch (JSONException failure) {
             onBridgeError("Unable to send message");
+        }
+    }
+
+    private void sendCryptoRecoveryKey() {
+        String secret = cryptoRecoveryInput.getText().toString();
+        if (secret.trim().isEmpty()) {
+            return;
+        }
+        try {
+            JSONObject payload = new JSONObject().put("secret", secret);
+            runtimeHost.send(new BridgeCommand("crypto.provideRecoveryKey", payload));
+            cryptoRecoveryInput.setText("");
+        } catch (JSONException failure) {
+            onBridgeError("Unable to unlock E2EE recovery");
         }
     }
 
@@ -438,12 +473,16 @@ public class MainActivity extends AppCompatActivity implements RuntimeBridge.Lis
     }
 
     private void sendPendingLoginIfRuntimeReady() {
-        if (pendingLoginPayload == null || !runtimeState.runtimeReady) {
+        if (pendingLoginPayload == null || !isMatrixRuntimeReady()) {
             return;
         }
         JSONObject payload = pendingLoginPayload;
         pendingLoginPayload = null;
         runtimeHost.send(new BridgeCommand("auth.loginPassword", payload));
+    }
+
+    private boolean isMatrixRuntimeReady() {
+        return runtimeState.runtimeReady && runtimeState.runtimeName.contains("matrix-js-sdk");
     }
 
     private void registerPushReceiver() {
